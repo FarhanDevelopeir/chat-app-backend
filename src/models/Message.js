@@ -28,6 +28,15 @@ const MessageSchema = new mongoose.Schema({
     data: { type: String },  // Base64 encoded audio data
     size: { type: Number },
     duration: { type: Number }  // Optional: Duration in seconds
+  },
+  // add code for group messages
+  isGroupMessage: {
+    type: Boolean,
+    default: false
+  },
+  groupId: {
+    type: String,
+    default: null
   }
 }, { timestamps: true });
 

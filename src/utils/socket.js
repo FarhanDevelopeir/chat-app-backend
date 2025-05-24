@@ -1,6 +1,8 @@
 const socketIO = require('socket.io');
 const User = require('../models/User');
 const Message = require('../models/Message');
+// add group model
+const Group = require('../models/Group');
 
 require('dotenv').config();
 
@@ -29,7 +31,7 @@ const setupSocket = (server) => {
 
     socket.on('admin:createUser', async ({ username, password }) => {
       try {
-         const isAdminSocket = Array.from(socket.rooms).includes('admin');
+        const isAdminSocket = Array.from(socket.rooms).includes('admin');
         if (!isAdminSocket) {
           console.log("username", username);
           console.log("password", password);
@@ -62,7 +64,7 @@ const setupSocket = (server) => {
 
         await user.save();
 
-         // Send success response
+        // Send success response
         socket.emit('admin:userCreated', {
           success: true,
           message: 'User created successfully'
@@ -88,84 +90,84 @@ const setupSocket = (server) => {
       }
     });
 
-    
-socket.on('admin:updateUser', async ({ userID, username, password }) => {
 
-  console.log('Update user attempt:', userID, username, password);
-  
-  try {
-    const isAdminSocket = Array.from(socket.rooms).includes('admin');
-    if (!isAdminSocket) {
-      socket.emit('admin:userUpdated', {
-        success: false,
-        message: 'Unauthorized. Only admin can update users.'
-      });
-      return;
-    }
+    socket.on('admin:updateUser', async ({ userID, username, password }) => {
 
-    console.log('Update user attempt:', userID, username, password);
+      console.log('Update user attempt:', userID, username, password);
 
-    // Find the user by original username
-    let user = await User.findOne({ _id: userID });
+      try {
+        const isAdminSocket = Array.from(socket.rooms).includes('admin');
+        if (!isAdminSocket) {
+          socket.emit('admin:userUpdated', {
+            success: false,
+            message: 'Unauthorized. Only admin can update users.'
+          });
+          return;
+        }
 
-    if (!user) {
-      socket.emit('admin:userUpdated', {
-        success: false,
-        message: 'User not found'
-      });
-      return;
-    }
+        console.log('Update user attempt:', userID, username, password);
 
-    // Check if new username already exists (if username is being changed)
-    // if (username !== originalUsername) {
-    //   const existingUser = await User.findOne({ username });
-    //   if (existingUser) {
-    //     socket.emit('admin:userUpdated', {
-    //       success: false,
-    //       message: 'Username already exists'
-    //     });
-    //     return;
-    //   }
-    // }
+        // Find the user by original username
+        let user = await User.findOne({ _id: userID });
 
-    // Update user fields
-    user.username = username;
-    if (password && password.trim()) {
-      user.password = password;
-    }
+        if (!user) {
+          socket.emit('admin:userUpdated', {
+            success: false,
+            message: 'User not found'
+          });
+          return;
+        }
 
-    await user.save();
+        // Check if new username already exists (if username is being changed)
+        // if (username !== originalUsername) {
+        //   const existingUser = await User.findOne({ username });
+        //   if (existingUser) {
+        //     socket.emit('admin:userUpdated', {
+        //       success: false,
+        //       message: 'Username already exists'
+        //     });
+        //     return;
+        //   }
+        // }
 
-    // Send success response
-    socket.emit('admin:userUpdated', {
-      success: true,
-      message: 'User updated successfully'
+        // Update user fields
+        user.username = username;
+        if (password && password.trim()) {
+          user.password = password;
+        }
+
+        await user.save();
+
+        // Send success response
+        socket.emit('admin:userUpdated', {
+          success: true,
+          message: 'User updated successfully'
+        });
+
+        // Update active users map if username changed
+        // if (username !== originalUsername && activeUsers.has(originalUsername)) {
+        //   const userData = activeUsers.get(originalUsername);
+        //   activeUsers.delete(originalUsername);
+        //   activeUsers.set(username, userData);
+        // }
+
+        // Send updated user list to admin
+        const allUsers = await User.find({}, 'username isOnline lastSeen');
+        io.to('admin').emit('admin:userList', allUsers);
+
+      } catch (error) {
+        console.error('Update user error:', error);
+        socket.emit('admin:userUpdated', {
+          success: false,
+          message: error.message || 'Failed to update user'
+        });
+      }
     });
-
-    // Update active users map if username changed
-    // if (username !== originalUsername && activeUsers.has(originalUsername)) {
-    //   const userData = activeUsers.get(originalUsername);
-    //   activeUsers.delete(originalUsername);
-    //   activeUsers.set(username, userData);
-    // }
-
-    // Send updated user list to admin
-    const allUsers = await User.find({}, 'username isOnline lastSeen');
-    io.to('admin').emit('admin:userList', allUsers);
-
-  } catch (error) {
-    console.error('Update user error:', error);
-    socket.emit('admin:userUpdated', {
-      success: false,
-      message: error.message || 'Failed to update user'
-    });
-  }
-});
 
     // User authentication/login
     socket.on('user:login', async ({ username, password, deviceId }) => {
       console.log('User login attempt:', username, password);
-      
+
       try {
         // Find or create user
         let user = await User.findOne({ username, password });
@@ -193,7 +195,7 @@ socket.on('admin:updateUser', async ({ userID, username, password }) => {
         user.lastSeen = Date.now();
         await user.save();
 
-        
+
         //   user.lastSeen = Date.now();
 
         // Store user details in the active users map
@@ -208,7 +210,7 @@ socket.on('admin:updateUser', async ({ userID, username, password }) => {
         // Send user list to admin
         const allUsers = await User.find({}, 'username isOnline lastSeen');
         console.log('allUsers', allUsers);
-        
+
         io.to('admin').emit('admin:userList', allUsers);
 
         // Confirm successful login to the user
@@ -232,9 +234,9 @@ socket.on('admin:updateUser', async ({ userID, username, password }) => {
       }
     });
 
-     socket.on('user:islogin', async ({ username, deviceId }) => {
+    socket.on('user:islogin', async ({ username, deviceId }) => {
       console.log('User islogin attempt:', username, deviceId);
-      
+
       try {
         // Find or create user
         let user = await User.findOne({ username, deviceId });
@@ -246,7 +248,7 @@ socket.on('admin:updateUser', async ({ userID, username, password }) => {
           });
           return;
         }
-        
+
         //   user.lastSeen = Date.now();
 
         user.isOnline = true;
@@ -289,7 +291,7 @@ socket.on('admin:updateUser', async ({ userID, username, password }) => {
 
 
 
-    
+
 
     // Admin authentication
     socket.on('admin:login', () => {
@@ -432,6 +434,161 @@ socket.on('admin:updateUser', async ({ userID, username, password }) => {
         }
       }
     })
+
+    // add code for group creation
+    // Create Group Handler
+    socket.on('admin:createGroup', async ({ groupName, members }) => {
+      console.log('Create group attempt:', groupName, members);
+      
+      try {
+        const isAdminSocket = Array.from(socket.rooms).includes('admin');
+        // if (!isAdminSocket) {
+        //   socket.emit('admin:groupCreated', {
+        //     success: false,
+        //     message: 'Unauthorized. Only admin can create groups.'
+        //   });
+        //   return;
+        // }
+
+        // Generate unique group ID
+        const groupId = `group_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+        // Create new group
+        const newGroup = new Group({
+          name: groupName,
+          groupId,
+          members,
+          admin: 'admin'
+        });
+
+        console.log('New group:', newGroup);
+        
+
+        await newGroup.save();
+
+        // Notify all group members
+        members.forEach(username => {
+          io.to(username).emit('group:created', {
+            group: newGroup,
+            message: `You've been added to group "${groupName}"`
+          });
+        });
+
+        // Send success response to admin
+        socket.emit('admin:groupCreated', {
+          success: true,
+          message: 'Group created successfully',
+          group: newGroup
+        });
+
+        // Send updated group list to admin
+        const allGroups = await Group.find({});
+        io.to('admin').emit('admin:groupList', allGroups);
+
+      } catch (error) {
+        console.error('Create group error:', error);
+        socket.emit('admin:groupCreated', {
+          success: false,
+          message: error.message || 'Failed to create group'
+        });
+      }
+    });
+
+    // Get user's groups
+    socket.on('user:getGroups', async (username) => {
+      try {
+        const userGroups = await Group.find({
+          members: username
+        }).sort({ lastActivity: -1 });
+
+        socket.emit('user:groupList', userGroups);
+      } catch (error) {
+        console.error('Get groups error:', error);
+      }
+    });
+
+    // Send group message
+    socket.on('group:sendMessage', async (messageData) => {
+      try {
+        const { sender, groupId, content, file, audio } = messageData;
+
+        // Verify sender is group member
+        const group = await Group.findOne({ groupId });
+        if (!group || !group.members.includes(sender)) {
+          socket.emit('message:error', { error: 'Not authorized to send messages to this group' });
+          return;
+        }
+
+        // Save message to database
+        const newMessage = new Message({
+          sender,
+          receiver: groupId, // Use groupId as receiver for group messages
+          content,
+          isRead: false,
+          file: file || undefined,
+          audio: audio || undefined,
+          isGroupMessage: true
+        });
+
+        await newMessage.save();
+
+        // Update group last activity
+        await Group.findByIdAndUpdate(group._id, { lastActivity: Date.now() });
+
+        // Send to all group members
+        group.members.forEach(member => {
+          io.to(member).emit('message:receive', newMessage);
+        });
+
+        // Send to admin if not sender
+        if (sender !== 'admin') {
+          io.to('admin').emit('message:receive', newMessage);
+        }
+
+        // Send back to sender for confirmation
+        socket.emit('message:sent', newMessage);
+
+      } catch (error) {
+        console.error('Error sending group message:', error);
+        socket.emit('message:error', { error: error.message });
+      }
+    });
+
+    // Get group messages
+    socket.on('group:getMessages', async (groupId) => {
+      try {
+        const messages = await Message.find({
+          receiver: groupId,
+          isGroupMessage: true
+        }).sort({ createdAt: 1 });
+
+        socket.emit('messages:history', messages);
+      } catch (error) {
+        console.error('Error fetching group messages:', error);
+      }
+    });
+
+    // Leave group
+    socket.on('group:leave', async ({ groupId, username }) => {
+      try {
+        await Group.findOneAndUpdate(
+          { groupId },
+          { $pull: { members: username } }
+        );
+
+        socket.emit('group:left', { groupId, message: 'Left group successfully' });
+
+        // Notify other group members
+        const group = await Group.findOne({ groupId });
+        if (group) {
+          group.members.forEach(member => {
+            io.to(member).emit('group:memberLeft', { groupId, username });
+          });
+        }
+      } catch (error) {
+        console.error('Leave group error:', error);
+      }
+    });
 
 
     // Handle disconnection
