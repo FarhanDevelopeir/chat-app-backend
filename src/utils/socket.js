@@ -337,73 +337,224 @@ socket.on('admin:updateUser', async ({ userID, username, password }) => {
       }
     });
 
-    // Admin selects a user to chat with
-    socket.on('admin:selectUser', async (username) => {
-      try {
-        // Get chat history with the selected user
-        const messages = await Message.find({
-          $or: [
-            { sender: username, receiver: "admin" },
-            { sender: "admin", receiver: username }
-          ]
-        }).sort({ createdAt: 1 });
+    // // Admin selects a user to chat with
+    // socket.on('admin:selectUser', async (username) => {
+    //   try {
+    //     // Get chat history with the selected user
+    //     const messages = await Message.find({
+    //       $or: [
+    //         { sender: username, receiver: "admin" },
+    //         { sender: "admin", receiver: username }
+    //       ]
+    //     }).sort({ createdAt: 1 });
 
-        socket.emit('messages:history', messages);
-      } catch (error) {
-        console.error('Error fetching chat history:', error);
-      }
-    });
+    //     socket.emit('messages:history', messages);
+    //   } catch (error) {
+    //     console.error('Error fetching chat history:', error);
+    //   }
+    // });
 
-    socket.on('user:typing', ({ sender, receiver }) => {
-      io.to(receiver).emit('user:typing', { sender });
-    });
+    // socket.on('user:typing', ({ sender, receiver }) => {
+    //   io.to(receiver).emit('user:typing', { sender });
+    // });
 
-    socket.on('user:stopTyping', ({ sender, receiver }) => {
-      io.to(receiver).emit('user:stopTyping', { sender });
-    });
+    // socket.on('user:stopTyping', ({ sender, receiver }) => {
+    //   io.to(receiver).emit('user:stopTyping', { sender });
+    // });
 
-    // Handle new message
-    socket.on('message:send', async (messageData) => {
-      try {
-        const { sender, receiver, content, file, audio } = messageData;
+    // // Handle new message
+    // socket.on('message:send', async (messageData) => {
+    //   try {
+    //     const { sender, receiver, content, file, audio } = messageData;
 
-        // Save message to database
-        const newMessage = new Message({
-          sender,
-          receiver,
-          content,
-          isRead: false,
-          file: file || undefined,
-          audio: audio || undefined,
+    //     // Save message to database
+    //     const newMessage = new Message({
+    //       sender,
+    //       receiver,
+    //       content,
+    //       isRead: false,
+    //       file: file || undefined,
+    //       audio: audio || undefined,
+    //     });
+
+    //     await newMessage.save();
+
+    //     // Send to receiver
+    //     io.to(receiver).emit('message:receive', newMessage);
+
+    //     // Send back to sender for confirmation
+    //     socket.emit('message:sent', newMessage);
+    //   } catch (error) {
+    //     console.error('Error sending message:', error);
+    //     socket.emit('message:error', { error: error.message });
+    //   }
+    // });
+
+    // // Mark messages as read
+    // socket.on('messages:markRead', async ({ sender, receiver }) => {
+    //   try {
+    //     await Message.updateMany(
+    //       { sender, receiver, isRead: false },
+    //       { isRead: true }
+    //     );
+
+    //     io.to(sender).emit('messages:updated');
+    //     io.to(receiver).emit('messages:updated');
+    //   } catch (error) {
+    //     console.error('Error marking messages as read:', error);
+    //   }
+    // });
+
+    // for meesage lenght 
+    // Add these handlers to your existing socket.js file
+
+// Get unread message counts for admin
+socket.on('admin:getUnreadCounts', async () => {
+  try {
+    // Get all users who have sent messages to admin
+    const users = await Message.distinct('sender', { receiver: 'admin' });
+    
+    const unreadCounts = {};
+    
+    // Count unread messages for each user
+    for (const username of users) {
+      if (username !== 'admin') { // Exclude admin's own messages
+        const count = await Message.countDocuments({
+          sender: username,
+          receiver: 'admin',
+          isRead: false
         });
-
-        await newMessage.save();
-
-        // Send to receiver
-        io.to(receiver).emit('message:receive', newMessage);
-
-        // Send back to sender for confirmation
-        socket.emit('message:sent', newMessage);
-      } catch (error) {
-        console.error('Error sending message:', error);
-        socket.emit('message:error', { error: error.message });
+        unreadCounts[username] = count;
       }
+    }
+    
+    socket.emit('admin:unreadCounts', unreadCounts);
+  } catch (error) {
+    console.error('Error getting unread counts:', error);
+  }
+});
+
+// Admin selects a user to chat with (Modified)
+socket.on('admin:selectUser', async (username) => {
+  try {
+    // Get chat history with the selected user
+    const messages = await Message.find({
+      $or: [
+        { sender: username, receiver: "admin" },
+        { sender: "admin", receiver: username }
+      ]
+    }).sort({ createdAt: 1 });
+
+    socket.emit('messages:history', messages);
+    
+    // Mark messages from this user as read
+    await Message.updateMany(
+      { sender: username, receiver: 'admin', isRead: false },
+      { isRead: true }
+    );
+    
+    // Send updated unread count for this specific user
+    const unreadCount = await Message.countDocuments({
+      sender: username,
+      receiver: 'admin',
+      isRead: false
+    });
+    
+    socket.emit('admin:unreadCountUpdate', { username, count: unreadCount });
+    
+  } catch (error) {
+    console.error('Error fetching chat history:', error);
+  }
+});
+
+// Handle new message (Modified to send unread count updates)
+socket.on('message:send', async (messageData) => {
+  try {
+    const { sender, receiver, content, file, audio } = messageData;
+
+    // Save message to database
+    const newMessage = new Message({
+      sender,
+      receiver,
+      content,
+      isRead: false,
+      file: file || undefined,
+      audio: audio || undefined,
     });
 
-    // Mark messages as read
-    socket.on('messages:markRead', async ({ sender, receiver }) => {
-      try {
-        await Message.updateMany(
-          { sender, receiver, isRead: false },
-          { isRead: true }
-        );
+    await newMessage.save();
 
-        io.to(sender).emit('messages:updated');
-        io.to(receiver).emit('messages:updated');
-      } catch (error) {
-        console.error('Error marking messages as read:', error);
-      }
+    // Send to receiver
+    io.to(receiver).emit('message:receive', newMessage);
+
+    // Send back to sender for confirmation
+    socket.emit('message:sent', newMessage);
+    
+    // If message is sent to admin, update unread count
+    if (receiver === 'admin') {
+      const unreadCount = await Message.countDocuments({
+        sender: sender,
+        receiver: 'admin',
+        isRead: false
+      });
+      
+      // Send unread count update to all admin sockets
+      io.to('admin').emit('admin:unreadCountUpdate', { username: sender, count: unreadCount });
+    }
+    
+  } catch (error) {
+    console.error('Error sending message:', error);
+    socket.emit('message:error', { error: error.message });
+  }
+});
+
+// Mark messages as read (Modified to send unread count updates)
+socket.on('messages:markRead', async ({ sender, receiver }) => {
+  try {
+    await Message.updateMany(
+      { sender, receiver, isRead: false },
+      { isRead: true }
+    );
+
+    // If admin is marking messages as read
+    if (receiver === 'admin') {
+      const unreadCount = await Message.countDocuments({
+        sender: sender,
+        receiver: 'admin',
+        isRead: false
+      });
+      
+      // Send updated unread count
+      io.to('admin').emit('admin:unreadCountUpdate', { username: sender, count: unreadCount });
+    }
+
+    io.to(sender).emit('messages:updated');
+    io.to(receiver).emit('messages:updated');
+  } catch (error) {
+    console.error('Error marking messages as read:', error);
+  }
+});
+
+// When admin connects, join admin room for broadcast updates
+socket.on('admin:login', (adminData) => {
+  socket.join('admin');
+  // ... rest of your admin login logic
+});
+
+// Optional: Get total unread count across all users
+socket.on('admin:getTotalUnreadCount', async () => {
+  try {
+    const totalUnread = await Message.countDocuments({
+      receiver: 'admin',
+      isRead: false
     });
+    
+    socket.emit('admin:totalUnreadCount', totalUnread);
+  } catch (error) {
+    console.error('Error getting total unread count:', error);
+  }
+});
+    // close message length
 
     socket.on('admin:logout', () => {
       socket.leave('admin');
