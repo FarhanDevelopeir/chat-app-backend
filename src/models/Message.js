@@ -22,6 +22,17 @@ const MessageSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  reactions: {
+    type: Map,
+    of: [String], // Array of usernames who reacted with each emoji
+    default: new Map()
+  },
+  // In your Message model
+  replyTo: {
+    messageId: { type: mongoose.Schema.Types.ObjectId, ref: 'Message' },
+    content: String,
+    sender: String
+  },
   file: {
     name: { type: String },
     type: { type: String },

@@ -326,6 +326,7 @@ const setupSocket = (server) => {
           return;
         }
 
+
         // Update user fields
         user.username = username;
         if (password && password.trim()) {
@@ -624,6 +625,8 @@ const setupSocket = (server) => {
       }
     });
 
+
+
     // Get unread message counts for admin
     socket.on('admin:getUnreadCounts', async () => {
       try {
@@ -650,6 +653,8 @@ const setupSocket = (server) => {
       }
     });
 
+    // for realtime reading of messages
+
     // Admin selects a user to chat with (Modified)
     socket.on('admin:selectUser', async (username) => {
       try {
@@ -661,15 +666,26 @@ const setupSocket = (server) => {
           ]
         }).sort({ createdAt: 1 });
 
-        // console.log('messages of selected user', messages)
-
         socket.emit('messages:history', messages);
 
         // Mark messages from this user as read
-        await Message.updateMany(
+        const updatedMessages = await Message.updateMany(
           { sender: username, receiver: 'admin', isRead: false },
           { isRead: true }
         );
+
+        // If messages were marked as read, notify the sender
+        if (updatedMessages.modifiedCount > 0) {
+          // Get the updated messages to send back their new read status
+          const readMessages = await Message.find({
+            sender: username,
+            receiver: 'admin',
+            isRead: true
+          }).sort({ createdAt: 1 });
+
+          // Emit read status update to the sender
+          io.to(username).emit('messages:readStatusUpdate', readMessages);
+        }
 
         // Send updated unread count for this specific user
         const unreadCount = await Message.countDocuments({
@@ -688,7 +704,7 @@ const setupSocket = (server) => {
     // Handle new message (Modified to send unread count updates)
     socket.on('message:send', async (messageData) => {
       try {
-        const { sender, receiver, content, file, audio } = messageData;
+        const { sender, receiver, content, file, audio, replyTo } = messageData;
 
         // Save message to database
         const newMessage = new Message({
@@ -698,6 +714,7 @@ const setupSocket = (server) => {
           isRead: false,
           file: file || undefined,
           audio: audio || undefined,
+          replyTo: replyTo || undefined, // Add this line
         });
 
         await newMessage.save();
@@ -726,13 +743,26 @@ const setupSocket = (server) => {
       }
     });
 
-    // Mark messages as read (Modified to send unread count updates)
+    // Mark messages as read (Modified to send read status updates to sender)
     socket.on('messages:markRead', async ({ sender, receiver }) => {
       try {
-        await Message.updateMany(
+        const result = await Message.updateMany(
           { sender, receiver, isRead: false },
           { isRead: true }
         );
+
+        // If messages were actually updated (marked as read)
+        if (result.modifiedCount > 0) {
+          // Get the updated messages that were just marked as read
+          const updatedMessages = await Message.find({
+            sender,
+            receiver,
+            isRead: true
+          }).sort({ createdAt: 1 });
+
+          // Notify the original sender that their messages have been read
+          io.to(sender).emit('messages:readStatusUpdate', updatedMessages);
+        }
 
         // If admin is marking messages as read
         if (receiver === 'admin') {
@@ -751,6 +781,163 @@ const setupSocket = (server) => {
       } catch (error) {
         console.error('Error marking messages as read:', error);
       }
+    });
+
+    // Handle emoji reactions
+    socket.on('message:addEmojiReaction', async (data) => {
+      try {
+        const { messageId, emoji, username } = data;
+
+        const message = await Message.findById(messageId);
+        if (!message) {
+          socket.emit('message:error', { error: 'Message not found' });
+          return;
+        }
+
+        // Initialize reactions if not exists
+        if (!message.reactions) {
+          message.reactions = new Map();
+        }
+
+        // Get current users who reacted with this emoji
+        const currentUsers = message.reactions.get(emoji) || [];
+
+        // Toggle user's reaction
+        let updatedUsers;
+        if (currentUsers.includes(username)) {
+          // Remove user's reaction
+          updatedUsers = currentUsers.filter(user => user !== username);
+          if (updatedUsers.length === 0) {
+            message.reactions.delete(emoji);
+          } else {
+            message.reactions.set(emoji, updatedUsers);
+          }
+        } else {
+          // Add user's reaction
+          updatedUsers = [...currentUsers, username];
+          message.reactions.set(emoji, updatedUsers);
+        }
+
+        await message.save();
+
+        // Convert Map to Object for transmission
+        const reactionsObj = {};
+        for (let [key, value] of message.reactions.entries()) {
+          reactionsObj[key] = value;
+        }
+
+        // Broadcast reaction update to both sender and receiver
+        io.to(message.sender).emit('message:emojiReactionUpdate', {
+          messageId: messageId,
+          reactions: reactionsObj
+        });
+
+        io.to(message.receiver).emit('message:emojiReactionUpdate', {
+          messageId: messageId,
+          reactions: reactionsObj
+        });
+
+      } catch (error) {
+        console.error('Error handling emoji reaction:', error);
+        socket.emit('message:error', { error: error.message });
+      }
+    });
+
+    // Handle message deletion
+    socket.on('message:delete', async (data) => {
+      try {
+        const { messageId, deletedBy, isAdmin } = data;
+
+        const message = await Message.findById(messageId);
+        if (!message) {
+          socket.emit('message:error', { error: 'Message not found' });
+          return;
+        }
+
+        // Check if user has permission to delete
+        const canDelete = (message.sender === deletedBy) || isAdmin;
+
+        if (!canDelete) {
+          socket.emit('message:error', { error: 'Permission denied' });
+          return;
+        }
+
+        // Mark message as deleted instead of actually deleting it
+        message.isDeleted = true;
+        message.deletedBy = deletedBy;
+        message.deletedAt = new Date();
+
+        // Clear sensitive content but keep metadata
+        const originalContent = message.content;
+        message.content = isAdmin
+          ? "This message was deleted by admin"
+          : `This message was deleted by ${deletedBy}`;
+
+        // Remove file and audio references
+        if (message.file) {
+          message.file = undefined;
+        }
+        if (message.audio) {
+          message.audio = undefined;
+        }
+
+        await message.save();
+
+        // Broadcast deletion to both participants
+        const deletionData = {
+          messageId: messageId,
+          deletedBy: deletedBy,
+          isAdmin: isAdmin
+        };
+
+        io.to(message.sender).emit('message:deleted', deletionData);
+        io.to(message.receiver).emit('message:deleted', deletionData);
+
+        console.log(`Message ${messageId} deleted by ${deletedBy}${isAdmin ? ' (admin)' : ''}`);
+
+      } catch (error) {
+        console.error('Error deleting message:', error);
+        socket.emit('message:error', { error: error.message });
+      }
+    });
+
+    // Updated message history handler to include reactions
+    socket.on('messages:getHistory', async ({ sender, receiver }) => {
+      try {
+        const messages = await Message.find({
+          $or: [
+            { sender: sender, receiver: receiver },
+            { sender: receiver, receiver: sender }
+          ]
+        }).sort({ createdAt: 1 });
+
+        // Convert reactions Map to Object for each message
+        const messagesWithReactions = messages.map(msg => {
+          const messageObj = msg.toObject();
+          if (messageObj.reactions) {
+            const reactionsObj = {};
+            for (let [key, value] of msg.reactions.entries()) {
+              reactionsObj[key] = value;
+            }
+            messageObj.reactions = reactionsObj;
+          }
+          return messageObj;
+        });
+
+        socket.emit('messages:history', messagesWithReactions);
+      } catch (error) {
+        console.error('Error fetching message history:', error);
+        socket.emit('message:error', { error: error.message });
+      }
+    });
+    // close for realtime reading of messages
+
+
+
+    // When admin connects, join admin room for broadcast updates
+    socket.on('admin:login', (adminData) => {
+      socket.join('admin');
+      // ... rest of your admin login logic
     });
 
     // Optional: Get total unread count across all users
