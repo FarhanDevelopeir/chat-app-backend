@@ -7,7 +7,12 @@ const MessageSchema = new mongoose.Schema({
   },
   receiver: {
     type: String,
-    required: true
+    default: null
+  },
+  groupId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Group',
+    default: null // null for individual messages
   },
   content: {
     type: String,
@@ -30,5 +35,10 @@ const MessageSchema = new mongoose.Schema({
     duration: { type: Number }  // Optional: Duration in seconds
   }
 }, { timestamps: true });
+
+// Indexes for better performance
+MessageSchema.index({ sender: 1, receiver: 1 });
+MessageSchema.index({ groupId: 1 });
+MessageSchema.index({ createdAt: -1 });
 
 module.exports = mongoose.model('Message', MessageSchema);
