@@ -34,7 +34,7 @@ const setupSocket = (server) => {
 
     // Create a new group
     socket.on('group:create', async (data) => {
-      try { 
+      try {
         const { name, members, createdBy } = data;
 
         // Verify admin permissions
@@ -166,7 +166,7 @@ const setupSocket = (server) => {
     // Send group message
     socket.on('group:sendMessage', async (data) => {
       try {
-        const { content, sender, groupId, file, audio } = data;
+        const { content, sender, groupId, file, audio, replyTo } = data;
         const Group = require('../models/group');
 
         // Verify user is a member of the group
@@ -183,7 +183,8 @@ const setupSocket = (server) => {
           groupId,
           file: file || undefined,
           audio: audio || undefined,
-          isRead: false
+          isRead: false,
+          replyTo: replyTo || undefined,
         });
 
         await newMessage.save();
@@ -201,11 +202,36 @@ const setupSocket = (server) => {
     });
 
     // Mark group messages as read
+    // socket.on('group:markRead', async (data) => {
+    //   try {
+    //     const { groupId, userId } = data;
+
+    //     await Message.updateMany(
+    //       {
+    //         groupId: groupId,
+    //         sender: { $ne: userId },
+    //         isRead: false
+    //       },
+    //       { isRead: true }
+    //     );
+
+    //     // Emit read status to all group members
+    //     io.to(groupId).emit('group:messagesRead', {
+    //       groupId,
+    //       readBy: userId
+    //     });
+
+    //   } catch (error) {
+    //     console.error('Error marking group messages as read:', error);
+    //   }
+    // });
+
+    // Mark group messages as read (Improved version)
     socket.on('group:markRead', async (data) => {
       try {
         const { groupId, userId } = data;
 
-        await Message.updateMany(
+        const result = await Message.updateMany(
           {
             groupId: groupId,
             sender: { $ne: userId },
@@ -214,17 +240,30 @@ const setupSocket = (server) => {
           { isRead: true }
         );
 
-        // Emit read status to all group members
-        io.to(groupId).emit('group:messagesRead', {
-          groupId,
-          readBy: userId
-        });
+        // If messages were actually updated (marked as read)
+        if (result.modifiedCount > 0) {
+          // Get the updated messages that were just marked as read
+          const updatedMessages = await Message.find({
+            groupId: groupId,
+            sender: { $ne: userId },
+            isRead: true
+          }).sort({ createdAt: 1 });
+
+          // Emit the actual updated messages to all group members
+          io.to(groupId).emit('group:readStatusUpdate', {
+            groupId,
+            readBy: userId,
+            updatedMessages
+          });
+        }
+
+        // Optional: Emit a general update event
+        io.to(groupId).emit('messages:updated');
 
       } catch (error) {
         console.error('Error marking group messages as read:', error);
       }
     });
-
     // Group typing indicators
     socket.on('group:typing', (data) => {
       const { groupId, sender } = data;
