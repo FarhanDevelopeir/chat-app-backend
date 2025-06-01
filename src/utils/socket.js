@@ -34,7 +34,7 @@ const setupSocket = (server) => {
 
     // Create a new group
     socket.on('group:create', async (data) => {
-      try {
+      try { 
         const { name, members, createdBy } = data;
 
         // Verify admin permissions
