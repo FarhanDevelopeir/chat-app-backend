@@ -408,6 +408,19 @@ const setupSocket = (server) => {
         // Send admin status to the user
         socket.emit('admin:status', { isOnline: adminIsOnline });
 
+        try {
+          const Admin = await admin.findOne({ username: 'admin' });
+
+          if (!Admin) {
+            return;
+          }
+
+          socket.emit('admin:profiledata', Admin);
+
+        } catch (error) {
+          console.error('Admin not found:', error);
+        }
+
         // Send previous messages to the user
         const messages = await Message.find({
           $or: [
@@ -476,6 +489,19 @@ const setupSocket = (server) => {
 
         // Send admin status to the user
         socket.emit('admin:status', { isOnline: adminIsOnline });
+
+        try {
+          const Admin = await admin.findOne({ username: 'admin' });
+
+          if (!Admin) {
+            return;
+          }
+
+          socket.emit('admin:profiledata', Admin);
+
+        } catch (error) {
+          console.error('Admin not found:', error);
+        }
 
         // Send previous messages to the user
         const messages = await Message.find({
@@ -569,22 +595,68 @@ const setupSocket = (server) => {
       }
     });
 
+    socket.on('admin:updateProfile', async ({ username, profilePicture }) => {
+
+      try {
+        // Find and update user
+        const Admin = await admin.findOneAndUpdate(
+          { username },
+          { profilePicture },
+          { new: true }
+        );
+
+        if (!Admin) {
+          socket.emit('admin:profileUpdateError', {
+            error: 'User not found'
+          });
+          return;
+        }
+
+        // Emit updated user data back to the user
+        socket.emit('admin:profileUpdated', Admin);
+
+        // Optionally, broadcast to admin or other users if needed
+        // io.to('admin').emit('user:profileUpdated', user);
+
+        console.log('Profile updated successfully for user:', username);
+
+      } catch (error) {
+        console.error('Profile update error:', error);
+        socket.emit('admin:profileUpdateError', { error: error.message });
+      }
+    });
+
     // Admin authentication
-    socket.on('admin:login', () => {
+    socket.on('admin:login', async () => {
       socket.join('admin');
       socket.username = 'admin'; // Set admin username
       adminIsOnline = true;
       socket.emit('admin:loginSuccess');
       broadcastAdminStatus();
 
+      try {
+        const Admin = await admin.findOne({ username: 'admin' });
+
+        if (!Admin) {
+          return;
+        }
+
+        socket.emit('admin:profiledata', Admin);
+
+      } catch (error) {
+        console.error('Admin not found:', error);
+      }
+
       // Send user list to admin
-      User.find({}, 'username isOnline lastSeen')
+      User.find({}, 'username isOnline lastSeen profilePicture')
         .then(users => {
           socket.emit('admin:userList', users);
         })
         .catch(error => {
           console.error('Error fetching users:', error);
         });
+
+
 
       // Send admin's groups
       try {
@@ -620,8 +692,10 @@ const setupSocket = (server) => {
           socket.emit('admin:loginSuccess');
           broadcastAdminStatus();
 
+          socket.emit('admin:profiledata', Admin);
+
           // Send user list to admin
-          User.find({}, 'username isOnline lastSeen')
+          User.find({}, 'username isOnline lastSeen profilePicture')
             .then(users => {
               socket.emit('admin:userList', users);
             })

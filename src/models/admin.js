@@ -11,7 +11,11 @@ const AdminSchema = new mongoose.Schema({
   password: {
     type: String,
     required: true
-  }
+  },
+  profilePicture: {
+    type: String,
+    default: null
+  },
 }, { timestamps: true });
 
 // Hash password before saving
