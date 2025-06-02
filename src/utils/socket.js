@@ -537,6 +537,38 @@ const setupSocket = (server) => {
       }
     });
 
+    socket.on('user:updateProfile', async ({ username, profilePicture }) => {
+      console.log('User profile update attempt:', username, profilePicture ? 'with image' : 'image removed');
+
+      try {
+        // Find and update user
+        const user = await User.findOneAndUpdate(
+          { username },
+          { profilePicture },
+          { new: true }
+        );
+
+        if (!user) {
+          socket.emit('user:profileUpdateError', {
+            error: 'User not found'
+          });
+          return;
+        }
+
+        // Emit updated user data back to the user
+        socket.emit('user:profileUpdated', user);
+
+        // Optionally, broadcast to admin or other users if needed
+        // io.to('admin').emit('user:profileUpdated', user);
+
+        console.log('Profile updated successfully for user:', username);
+
+      } catch (error) {
+        console.error('Profile update error:', error);
+        socket.emit('user:profileUpdateError', { error: error.message });
+      }
+    });
+
     // Admin authentication
     socket.on('admin:login', () => {
       socket.join('admin');
