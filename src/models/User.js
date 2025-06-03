@@ -15,6 +15,10 @@ const UserSchema = new mongoose.Schema({
     type: String,
     // required: true
   },
+  profilePicture: {
+    type: String,
+    default: null
+  },
   isOnline: {
     type: Boolean,
     default: false
@@ -25,7 +29,7 @@ const UserSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
-UserSchema.methods.comparePassword = async function(candidatePassword) {
+UserSchema.methods.comparePassword = async function (candidatePassword) {
   return this.password === candidatePassword;
 };
 
