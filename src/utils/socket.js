@@ -353,11 +353,51 @@ const setupSocket = (server) => {
       }
     });
 
+    function getUserIP(socket) {
+      // Try multiple methods to get the real IP address
+      let userIP =
+        // Check for forwarded IPs (when behind proxy/load balancer)
+        socket.handshake.headers['x-forwarded-for'] ||
+        socket.handshake.headers['x-real-ip'] ||
+        socket.handshake.headers['x-client-ip'] ||
+        socket.handshake.headers['cf-connecting-ip'] || // Cloudflare
+        // Fallback to socket IP
+        socket.handshake.address ||
+        socket.request.connection.remoteAddress ||
+        socket.request.socket.remoteAddress ||
+        (socket.request.connection.socket ? socket.request.connection.socket.remoteAddress : null);
+
+      // Handle multiple IPs (x-forwarded-for can contain multiple IPs)
+      if (userIP && userIP.includes(',')) {
+        userIP = userIP.split(',')[0].trim();
+      }
+
+      // Clean up IPv6 mapped IPv4 addresses
+      if (userIP && userIP.includes('::ffff:')) {
+        userIP = userIP.replace('::ffff:', '');
+      }
+
+      // Handle localhost cases
+      if (userIP === '::1' || userIP === '127.0.0.1') {
+        // In development, you might want to use a default or get public IP
+        console.log('Local connection detected');
+        // You could return a placeholder or try to get public IP
+        return 'localhost (' + userIP + ')';
+      }
+
+      return userIP || 'unknown';
+    }
+
     // User authentication/login
     socket.on('user:login', async ({ username, password, deviceId }) => {
       console.log('User login attempt:', username, password);
 
       try {
+
+
+        const userIP = getUserIP(socket);
+        console.log('User IP:', userIP);
+
         // Find or create user
         let user = await User.findOne({ username, password });
 
@@ -382,6 +422,7 @@ const setupSocket = (server) => {
         user.deviceId = deviceId;
         user.isOnline = true;
         user.lastSeen = Date.now();
+        user.ipAddress = userIP;
         await user.save();
 
         // Store username on socket for group functionality
@@ -390,14 +431,24 @@ const setupSocket = (server) => {
         // Store user details in the active users map
         activeUsers.set(username, {
           socketId: socket.id,
-          userId: user._id
+          userId: user._id,
+          ipAddress: userIP
         });
 
         // Join a room with the username
         socket.join(username);
 
         // Send user list to admin
-        const allUsers = await User.find({}, 'username isOnline lastSeen');
+        const allUsersRaw = await User.find({}, 'username isOnline lastSeen ipAddress');
+        const allUsers = allUsersRaw.map(user => ({
+          _id: user._id,
+          username: user.username,
+          isOnline: user.isOnline,
+          lastSeen: user.lastSeen,
+          ipAddress: user.ipAddress || 'Not recorded' // Fallback for missing IP
+        }));
+
+        io.to('admin').emit('admin:userList', allUsers);
         console.log('allUsers', allUsers);
 
         io.to('admin').emit('admin:userList', allUsers);
@@ -453,6 +504,9 @@ const setupSocket = (server) => {
       console.log('User islogin attempt:', username, deviceId);
 
       try {
+
+        const userIP = getUserIP(socket);
+        console.log('User IP:', userIP);
         // Find or create user
         let user = await User.findOne({ username, deviceId });
 
@@ -466,6 +520,7 @@ const setupSocket = (server) => {
 
         user.isOnline = true;
         user.lastSeen = Date.now();
+        user.ipAddress = userIP;
         await user.save();
 
         // Store username on socket for group functionality
@@ -481,7 +536,7 @@ const setupSocket = (server) => {
         socket.join(username);
 
         // Send user list to admin
-        const allUsers = await User.find({}, 'username isOnline lastSeen');
+        const allUsers = await User.find({}, 'username isOnline lastSeen ipAddress');
         io.to('admin').emit('admin:userList', allUsers);
 
         // Confirm successful login to the user
@@ -648,7 +703,7 @@ const setupSocket = (server) => {
       }
 
       // Send user list to admin
-      User.find({}, 'username isOnline lastSeen profilePicture')
+      User.find({}, 'username isOnline lastSeen profilePicture ipAddress')
         .then(users => {
           socket.emit('admin:userList', users);
         })
@@ -695,7 +750,7 @@ const setupSocket = (server) => {
           socket.emit('admin:profiledata', Admin);
 
           // Send user list to admin
-          User.find({}, 'username isOnline lastSeen profilePicture')
+          User.find({}, 'username isOnline lastSeen profilePicture ipAddress')
             .then(users => {
               socket.emit('admin:userList', users);
             })
