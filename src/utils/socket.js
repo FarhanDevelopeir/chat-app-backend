@@ -138,28 +138,70 @@ const setupSocket = (server) => {
     });
 
     // Join a group room
+    // socket.on('group:join', async (groupId) => {
+    //   try {
+    //     const Group = require('../models/group');
+    //     const group = await Group.findById(groupId);
+
+    //     if (!group || !group.members.includes(socket.username)) {
+    //       socket.emit('group:joinError', { message: 'Access denied' });
+    //       return;
+    //     }
+
+    //     socket.join(groupId);
+
+    //     // Send group message history
+    //     const messages = await Message.find({
+    //       groupId: groupId
+    //     }).sort({ createdAt: 1 }).limit(100);
+
+    //     socket.emit('messages:history', messages);
+
+    //   } catch (error) {
+    //     console.error('Error joining group:', error);
+    //     socket.emit('group:joinError', { message: 'Failed to join group' });
+    //   }
+    // });
+
+    // Updated group join handler (if you have groups)
     socket.on('group:join', async (groupId) => {
       try {
-        const Group = require('../models/group');
-        const group = await Group.findById(groupId);
-
-        if (!group || !group.members.includes(socket.username)) {
-          socket.emit('group:joinError', { message: 'Access denied' });
-          return;
-        }
-
         socket.join(groupId);
 
-        // Send group message history
-        const messages = await Message.find({
-          groupId: groupId
-        }).sort({ createdAt: 1 }).limit(100);
+        const page = 1;
+        const limit = 12;
+        const skip = (page - 1) * limit;
 
-        socket.emit('messages:history', messages);
+        // Get total count for pagination
+        const totalMessages = await Message.countDocuments({ groupId });
+
+        // Get paginated messages
+        const messages = await Message.find({ groupId })
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .then(msgs => msgs.reverse());
+
+        const hasMore = totalMessages > (page * limit);
+
+        socket.emit('messages:history', {
+          messages,
+          hasMore,
+          page,
+          total: totalMessages
+        });
+
+        // Mark group messages as read
+        const username = socket.username;
+        if (username) {
+          await Message.updateMany(
+            { groupId, isRead: false },
+            { $addToSet: { readBy: username } }
+          );
+        }
 
       } catch (error) {
         console.error('Error joining group:', error);
-        socket.emit('group:joinError', { message: 'Failed to join group' });
       }
     });
 
@@ -626,17 +668,73 @@ const setupSocket = (server) => {
       }
     });
 
+    // socket.on('user:adminChat', async (username) => {
+    //   try {
+    //     // Get chat history with the selected user
+    //     const messages = await Message.find({
+    //       $or: [
+    //         { sender: username, receiver: "admin" },
+    //         { sender: "admin", receiver: username }
+    //       ]
+    //     }).sort({ createdAt: 1 });
+
+    //     socket.emit('messages:history', messages);
+
+    //     // Mark messages from this user as read
+    //     await Message.updateMany(
+    //       { sender: username, receiver: 'admin', isRead: false },
+    //       { isRead: true }
+    //     );
+
+    //     // Send updated unread count for this specific user
+    //     // const unreadCount = await Message.countDocuments({
+    //     //   sender: username,
+    //     //   receiver: 'admin',
+    //     //   isRead: false
+    //     // });
+
+    //     // socket.emit('admin:unreadCountUpdate', { username, count: unreadCount });
+
+    //   } catch (error) {
+    //     console.error('Error fetching chat history:', error);
+    //   }
+    // });
+
+
     socket.on('user:adminChat', async (username) => {
       try {
-        // Get chat history with the selected user
+        const page = 1;
+        const limit = 12;
+        const skip = (page - 1) * limit;
+
+        // Get total count for pagination
+        const totalMessages = await Message.countDocuments({
+          $or: [
+            { sender: username, receiver: "admin" },
+            { sender: "admin", receiver: username }
+          ]
+        });
+
+        // Get paginated messages (most recent first, then reverse for chronological order)
         const messages = await Message.find({
           $or: [
             { sender: username, receiver: "admin" },
             { sender: "admin", receiver: username }
           ]
-        }).sort({ createdAt: 1 });
+        })
+          .sort({ createdAt: -1 }) // Get newest first
+          .skip(skip)
+          .limit(limit)
+          .then(msgs => msgs.reverse()); // Reverse to show chronological order
 
-        socket.emit('messages:history', messages);
+        const hasMore = totalMessages > (page * limit);
+
+        socket.emit('messages:history', {
+          messages,
+          hasMore,
+          page,
+          total: totalMessages
+        });
 
         // Mark messages from this user as read
         await Message.updateMany(
@@ -644,19 +742,11 @@ const setupSocket = (server) => {
           { isRead: true }
         );
 
-        // Send updated unread count for this specific user
-        // const unreadCount = await Message.countDocuments({
-        //   sender: username,
-        //   receiver: 'admin',
-        //   isRead: false
-        // });
-
-        // socket.emit('admin:unreadCountUpdate', { username, count: unreadCount });
-
       } catch (error) {
         console.error('Error fetching chat history:', error);
       }
     });
+
 
     socket.on('user:updateProfile', async ({ username, profilePicture }) => {
       console.log('User profile update attempt:', username, profilePicture ? 'with image' : 'image removed');
@@ -856,17 +946,86 @@ const setupSocket = (server) => {
     // for realtime reading of messages
 
     // Admin selects a user to chat with (Modified)
+    // socket.on('admin:selectUser', async (username) => {
+    //   try {
+    //     // Get chat history with the selected user
+    //     const messages = await Message.find({
+    //       $or: [
+    //         { sender: username, receiver: "admin" },
+    //         { sender: "admin", receiver: username }
+    //       ]
+    //     }).sort({ createdAt: 1 });
+
+    //     socket.emit('messages:history', messages);
+
+    //     // Mark messages from this user as read
+    //     const updatedMessages = await Message.updateMany(
+    //       { sender: username, receiver: 'admin', isRead: false },
+    //       { isRead: true }
+    //     );
+
+    //     // If messages were marked as read, notify the sender
+    //     if (updatedMessages.modifiedCount > 0) {
+    //       // Get the updated messages to send back their new read status
+    //       const readMessages = await Message.find({
+    //         sender: username,
+    //         receiver: 'admin',
+    //         isRead: true
+    //       }).sort({ createdAt: 1 });
+
+    //       // Emit read status update to the sender
+    //       io.to(username).emit('messages:readStatusUpdate', readMessages);
+    //     }
+
+    //     // Send updated unread count for this specific user
+    //     const unreadCount = await Message.countDocuments({
+    //       sender: username,
+    //       receiver: 'admin',
+    //       isRead: false
+    //     });
+
+    //     socket.emit('admin:unreadCountUpdate', { username, count: unreadCount });
+
+    //   } catch (error) {
+    //     console.error('Error fetching chat history:', error);
+    //   }
+    // });
+
+    // Updated admin:selectUser handler
     socket.on('admin:selectUser', async (username) => {
       try {
-        // Get chat history with the selected user
+        const page = 1;
+        const limit = 12;
+        const skip = (page - 1) * limit;
+
+        // Get total count for pagination
+        const totalMessages = await Message.countDocuments({
+          $or: [
+            { sender: username, receiver: "admin" },
+            { sender: "admin", receiver: username }
+          ]
+        });
+
+        // Get paginated messages
         const messages = await Message.find({
           $or: [
             { sender: username, receiver: "admin" },
             { sender: "admin", receiver: username }
           ]
-        }).sort({ createdAt: 1 });
+        })
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .then(msgs => msgs.reverse());
 
-        socket.emit('messages:history', messages);
+        const hasMore = totalMessages > (page * limit);
+
+        socket.emit('messages:history', {
+          messages,
+          hasMore,
+          page,
+          total: totalMessages
+        });
 
         // Mark messages from this user as read
         const updatedMessages = await Message.updateMany(
@@ -876,28 +1035,63 @@ const setupSocket = (server) => {
 
         // If messages were marked as read, notify the sender
         if (updatedMessages.modifiedCount > 0) {
-          // Get the updated messages to send back their new read status
           const readMessages = await Message.find({
             sender: username,
             receiver: 'admin',
             isRead: true
           }).sort({ createdAt: 1 });
 
-          // Emit read status update to the sender
           io.to(username).emit('messages:readStatusUpdate', readMessages);
         }
 
-        // Send updated unread count for this specific user
-        const unreadCount = await Message.countDocuments({
-          sender: username,
-          receiver: 'admin',
-          isRead: false
-        });
-
-        socket.emit('admin:unreadCountUpdate', { username, count: unreadCount });
-
       } catch (error) {
         console.error('Error fetching chat history:', error);
+      }
+    });
+
+    // New handler for loading more messages
+    socket.on('messages:loadMore', async (data) => {
+      try {
+        const { page = 1, limit = 12, sender, receiver, groupId } = data;
+        const skip = (page - 1) * limit;
+
+        let query;
+        let totalMessages;
+
+        if (groupId) {
+          // Group chat
+          query = { groupId };
+          totalMessages = await Message.countDocuments(query);
+        } else {
+          // Direct chat
+          query = {
+            $or: [
+              { sender: sender, receiver: receiver },
+              { sender: receiver, receiver: sender }
+            ]
+          };
+          totalMessages = await Message.countDocuments(query);
+        }
+
+        // Get paginated messages
+        const messages = await Message.find(query)
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .then(msgs => msgs.reverse());
+
+        const hasMore = totalMessages > (page * limit);
+
+        socket.emit('messages:history', {
+          messages,
+          hasMore,
+          page,
+          total: totalMessages
+        });
+
+      } catch (error) {
+        console.error('Error loading more messages:', error);
+        socket.emit('messages:loadError', { error: error.message });
       }
     });
 
@@ -1131,8 +1325,6 @@ const setupSocket = (server) => {
       }
     });
     // close for realtime reading of messages
-
-
 
     // When admin connects, join admin room for broadcast updates
     socket.on('admin:login', (adminData) => {
