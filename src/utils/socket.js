@@ -1,5 +1,6 @@
 const socketIO = require('socket.io');
 const User = require('../models/User');
+const Group = require('../models/group');
 const Message = require('../models/Message');
 const admin = require('../models/admin');
 
@@ -116,20 +117,195 @@ const setupSocket = (server) => {
         socket.emit('group:updated', { success: false, message: 'Error updating group' });
       }
     });
-
-
     // Get user's groups
+    // socket.on('groups:fetch', async (data) => {
+    //   try {
+    //     const { username } = data;
+    //     const Group = require('../models/group');
+
+    //     const userGroups = await Group.find({
+    //       members: username
+    //     }).sort({ createdAt: -1 });
+
+
+    //     socket.emit('groups:list', userGroups);
+
+    //   } catch (error) {
+    //     console.error('Error fetching groups:', error);
+    //     socket.emit('groups:error', { message: 'Failed to fetch groups' });
+    //   }
+    // });
+
+
+
+
+
+
+    // // Updated group join handler (if you have groups)
+    // socket.on('group:join', async (groupId) => {
+    //   try {
+    //     socket.join(groupId);
+
+    //     const page = 1;
+    //     const limit = 12;
+    //     const skip = (page - 1) * limit;
+
+    //     // Get total count for pagination
+    //     const totalMessages = await Message.countDocuments({ groupId });
+
+    //     // Get paginated messages
+    //     const messages = await Message.find({ groupId })
+    //       .sort({ createdAt: -1 })
+    //       .skip(skip)
+    //       .limit(limit)
+    //       .then(msgs => msgs.reverse());
+
+    //     const hasMore = totalMessages > (page * limit);
+
+    //     socket.emit('messages:history', {
+    //       messages,
+    //       hasMore,
+    //       page,
+    //       total: totalMessages
+    //     });
+
+    //     // Mark group messages as read
+    //     const username = socket.username;
+    //     if (username) {
+    //       await Message.updateMany(
+    //         { groupId, isRead: false },
+    //         { $addToSet: { readBy: username } }
+    //       );
+    //     }
+
+    //   } catch (error) {
+    //     console.error('Error joining group:', error);
+    //   }
+    // });
+
+    // // Send group message
+    // socket.on('group:sendMessage', async (data) => {
+    //   try {
+    //     const { content, sender, groupId, file, audio, replyTo } = data;
+    //     const Group = require('../models/group');
+
+    //     // Verify user is a member of the group
+    //     const group = await Group.findById(groupId);
+    //     if (!group || !group.members.includes(sender)) {
+    //       socket.emit('group:messageError', { message: 'Access denied' });
+    //       return;
+    //     }
+
+    //     const newMessage = new Message({
+    //       content,
+    //       sender,
+    //       receiver: null, // null for group messages
+    //       groupId,
+    //       file: file || undefined,
+    //       audio: audio || undefined,
+    //       isRead: false,
+    //       replyTo: replyTo || undefined,
+    //     });
+
+    //     await newMessage.save();
+
+    //     // Emit to all group members
+    //     io.to(groupId).emit('group:messageReceive', newMessage);
+
+    //     // Also emit back to sender for confirmation
+    //     socket.emit('group:messageSent', newMessage);
+
+    //   } catch (error) {
+    //     console.error('Error sending group message:', error);
+    //     socket.emit('group:messageError', { message: 'Failed to send message' });
+    //   }
+    // });
+
+    // Mark group messages as read
+
+    // socket.on('group:markRead', async (data) => {
+    //   try {
+    //     const { groupId, userId } = data;
+
+    //     const result = await Message.updateMany(
+    //       {
+    //         groupId: groupId,
+    //         sender: { $ne: userId },
+    //         isRead: false
+    //       },
+    //       { isRead: true }
+    //     );
+
+    //     // If messages were actually updated (marked as read)
+    //     if (result.modifiedCount > 0) {
+    //       // Get the updated messages that were just marked as read
+    //       const updatedMessages = await Message.find({
+    //         groupId: groupId,
+    //         sender: { $ne: userId },
+    //         isRead: true
+    //       }).sort({ createdAt: 1 });
+
+    //       // Emit the actual updated messages to all group members
+    //       io.to(groupId).emit('group:readStatusUpdate', {
+    //         groupId,
+    //         readBy: userId,
+    //         updatedMessages
+    //       });
+    //     }
+
+    //     // Optional: Emit a general update event
+    //     io.to(groupId).emit('messages:updated');
+
+    //   } catch (error) {
+    //     console.error('Error marking group messages as read:', error);
+    //   }
+    // });
+
+
+
+    // ADD THESE REQUIRES AT THE TOP OF YOUR SOCKET FILE (OUTSIDE OF ANY SOCKET HANDLERS)
+
+
+    // Updated groups fetch handler - REMOVE require statements from inside
     socket.on('groups:fetch', async (data) => {
       try {
         const { username } = data;
-        const Group = require('../models/group');
+        // REMOVED: const Group = require('../models/group');
+        // REMOVED: const Message = require('../models/message');
 
         const userGroups = await Group.find({
           members: username
         }).sort({ createdAt: -1 });
 
+        // Calculate unread message counts for each group
+        const groupsWithUnreadCounts = await Promise.all(
+          userGroups.map(async (group) => {
+            // Count unread messages in this group for this user
+            const unreadCount = await Message.countDocuments({
+              groupId: group._id,
+              sender: { $ne: username }, // Don't count user's own messages
+              isRead: false
+            });
 
-        socket.emit('groups:list', userGroups);
+            // Get the latest message for sorting purposes
+            const latestMessage = await Message.findOne({
+              groupId: group._id
+            }).sort({ createdAt: -1 });
+
+            return {
+              ...group.toObject(),
+              unreadCount,
+              lastMessageTime: latestMessage ? latestMessage.createdAt : group.createdAt
+            };
+          })
+        );
+
+        // Sort by last message time (most recent first)
+        groupsWithUnreadCounts.sort((a, b) =>
+          new Date(b.lastMessageTime) - new Date(a.lastMessageTime)
+        );
+
+        socket.emit('groups:list', groupsWithUnreadCounts);
 
       } catch (error) {
         console.error('Error fetching groups:', error);
@@ -137,33 +313,7 @@ const setupSocket = (server) => {
       }
     });
 
-    // Join a group room
-    // socket.on('group:join', async (groupId) => {
-    //   try {
-    //     const Group = require('../models/group');
-    //     const group = await Group.findById(groupId);
-
-    //     if (!group || !group.members.includes(socket.username)) {
-    //       socket.emit('group:joinError', { message: 'Access denied' });
-    //       return;
-    //     }
-
-    //     socket.join(groupId);
-
-    //     // Send group message history
-    //     const messages = await Message.find({
-    //       groupId: groupId
-    //     }).sort({ createdAt: 1 }).limit(100);
-
-    //     socket.emit('messages:history', messages);
-
-    //   } catch (error) {
-    //     console.error('Error joining group:', error);
-    //     socket.emit('group:joinError', { message: 'Failed to join group' });
-    //   }
-    // });
-
-    // Updated group join handler (if you have groups)
+    // Updated group join handler - REMOVE require statements
     socket.on('group:join', async (groupId) => {
       try {
         socket.join(groupId);
@@ -191,13 +341,23 @@ const setupSocket = (server) => {
           total: totalMessages
         });
 
-        // Mark group messages as read
+        // Mark group messages as read for this user
         const username = socket.username;
         if (username) {
           await Message.updateMany(
-            { groupId, isRead: false },
-            { $addToSet: { readBy: username } }
+            {
+              groupId,
+              isRead: false,
+              sender: { $ne: username } // Don't mark own messages as read
+            },
+            { isRead: true }
           );
+
+          // Emit read status update to all group members
+          io.to(groupId).emit('group:readStatusUpdate', {
+            groupId,
+            readBy: username
+          });
         }
 
       } catch (error) {
@@ -205,11 +365,11 @@ const setupSocket = (server) => {
       }
     });
 
-    // Send group message
+    // Updated group send message handler - REMOVE require statements
     socket.on('group:sendMessage', async (data) => {
       try {
         const { content, sender, groupId, file, audio, replyTo } = data;
-        const Group = require('../models/group');
+        // REMOVED: const Group = require('../models/group');
 
         // Verify user is a member of the group
         const group = await Group.findById(groupId);
@@ -221,21 +381,67 @@ const setupSocket = (server) => {
         const newMessage = new Message({
           content,
           sender,
-          receiver: null, // null for group messages
+          receiver: null,
           groupId,
           file: file || undefined,
           audio: audio || undefined,
           isRead: false,
           replyTo: replyTo || undefined,
+          createdAt: new Date()
         });
 
         await newMessage.save();
 
+        // Update group's lastActivity timestamp
+        await Group.findByIdAndUpdate(groupId, {
+          lastActivity: new Date()
+        });
+
         // Emit to all group members
         io.to(groupId).emit('group:messageReceive', newMessage);
-
-        // Also emit back to sender for confirmation
         socket.emit('group:messageSent', newMessage);
+
+        // Update groups list for ALL members
+        const updateGroupsForAllMembers = async () => {
+          for (const member of group.members) {
+            const memberSockets = Array.from(io.sockets.sockets.values())
+              .filter(s => s.username === member);
+
+            for (const memberSocket of memberSockets) {
+              const userGroups = await Group.find({
+                members: member
+              });
+
+              const groupsWithUnreadCounts = await Promise.all(
+                userGroups.map(async (group) => {
+                  const unreadCount = await Message.countDocuments({
+                    groupId: group._id,
+                    sender: { $ne: member },
+                    isRead: false
+                  });
+
+                  const latestMessage = await Message.findOne({
+                    groupId: group._id
+                  }).sort({ createdAt: -1 });
+
+                  return {
+                    ...group.toObject(),
+                    unreadCount,
+                    lastMessageTime: latestMessage ? latestMessage.createdAt : group.createdAt
+                  };
+                })
+              );
+
+              groupsWithUnreadCounts.sort((a, b) =>
+                new Date(b.lastMessageTime) - new Date(a.lastMessageTime)
+              );
+
+              memberSocket.emit('groups:listUpdated', groupsWithUnreadCounts);
+            }
+          }
+        };
+
+        await updateGroupsForAllMembers();
 
       } catch (error) {
         console.error('Error sending group message:', error);
@@ -243,32 +449,7 @@ const setupSocket = (server) => {
       }
     });
 
-    // Mark group messages as read
-    // socket.on('group:markRead', async (data) => {
-    //   try {
-    //     const { groupId, userId } = data;
-
-    //     await Message.updateMany(
-    //       {
-    //         groupId: groupId,
-    //         sender: { $ne: userId },
-    //         isRead: false
-    //       },
-    //       { isRead: true }
-    //     );
-
-    //     // Emit read status to all group members
-    //     io.to(groupId).emit('group:messagesRead', {
-    //       groupId,
-    //       readBy: userId
-    //     });
-
-    //   } catch (error) {
-    //     console.error('Error marking group messages as read:', error);
-    //   }
-    // });
-
-    // Mark group messages as read (Improved version)
+    // Updated mark read handler - REMOVE require statements
     socket.on('group:markRead', async (data) => {
       try {
         const { groupId, userId } = data;
@@ -282,30 +463,62 @@ const setupSocket = (server) => {
           { isRead: true }
         );
 
-        // If messages were actually updated (marked as read)
         if (result.modifiedCount > 0) {
-          // Get the updated messages that were just marked as read
           const updatedMessages = await Message.find({
             groupId: groupId,
-            sender: { $ne: userId },
             isRead: true
           }).sort({ createdAt: 1 });
 
-          // Emit the actual updated messages to all group members
           io.to(groupId).emit('group:readStatusUpdate', {
             groupId,
             readBy: userId,
-            updatedMessages
+            updatedMessages,
+            messagesMarkedRead: result.modifiedCount
           });
         }
 
-        // Optional: Emit a general update event
-        io.to(groupId).emit('messages:updated');
+        // Update the user's groups list
+        // REMOVED: const Group = require('../models/group');
+        const userGroups = await Group.find({
+          members: userId
+        });
+
+        const groupsWithUnreadCounts = await Promise.all(
+          userGroups.map(async (group) => {
+            const unreadCount = await Message.countDocuments({
+              groupId: group._id,
+              sender: { $ne: userId },
+              isRead: false
+            });
+
+            const latestMessage = await Message.findOne({
+              groupId: group._id
+            }).sort({ createdAt: -1 });
+
+            return {
+              ...group.toObject(),
+              unreadCount,
+              lastMessageTime: latestMessage ? latestMessage.createdAt : group.createdAt
+            };
+          })
+        );
+
+        groupsWithUnreadCounts.sort((a, b) =>
+          new Date(b.lastMessageTime) - new Date(a.lastMessageTime)
+        );
+
+        const userSockets = Array.from(io.sockets.sockets.values())
+          .filter(s => s.username === userId);
+
+        userSockets.forEach(userSocket => {
+          userSocket.emit('groups:listUpdated', groupsWithUnreadCounts);
+        });
 
       } catch (error) {
         console.error('Error marking group messages as read:', error);
       }
     });
+
     // Group typing indicators
     socket.on('group:typing', (data) => {
       const { groupId, sender } = data;
@@ -668,39 +881,6 @@ const setupSocket = (server) => {
       }
     });
 
-    // socket.on('user:adminChat', async (username) => {
-    //   try {
-    //     // Get chat history with the selected user
-    //     const messages = await Message.find({
-    //       $or: [
-    //         { sender: username, receiver: "admin" },
-    //         { sender: "admin", receiver: username }
-    //       ]
-    //     }).sort({ createdAt: 1 });
-
-    //     socket.emit('messages:history', messages);
-
-    //     // Mark messages from this user as read
-    //     await Message.updateMany(
-    //       { sender: username, receiver: 'admin', isRead: false },
-    //       { isRead: true }
-    //     );
-
-    //     // Send updated unread count for this specific user
-    //     // const unreadCount = await Message.countDocuments({
-    //     //   sender: username,
-    //     //   receiver: 'admin',
-    //     //   isRead: false
-    //     // });
-
-    //     // socket.emit('admin:unreadCountUpdate', { username, count: unreadCount });
-
-    //   } catch (error) {
-    //     console.error('Error fetching chat history:', error);
-    //   }
-    // });
-
-
     socket.on('user:adminChat', async (username) => {
       try {
         const page = 1;
@@ -746,7 +926,6 @@ const setupSocket = (server) => {
         console.error('Error fetching chat history:', error);
       }
     });
-
 
     socket.on('user:updateProfile', async ({ username, profilePicture }) => {
       console.log('User profile update attempt:', username, profilePicture ? 'with image' : 'image removed');
@@ -915,8 +1094,6 @@ const setupSocket = (server) => {
       }
     });
 
-
-
     // Get unread message counts for admin
     socket.on('admin:getUnreadCounts', async () => {
       try {
@@ -944,52 +1121,6 @@ const setupSocket = (server) => {
     });
 
     // for realtime reading of messages
-
-    // Admin selects a user to chat with (Modified)
-    // socket.on('admin:selectUser', async (username) => {
-    //   try {
-    //     // Get chat history with the selected user
-    //     const messages = await Message.find({
-    //       $or: [
-    //         { sender: username, receiver: "admin" },
-    //         { sender: "admin", receiver: username }
-    //       ]
-    //     }).sort({ createdAt: 1 });
-
-    //     socket.emit('messages:history', messages);
-
-    //     // Mark messages from this user as read
-    //     const updatedMessages = await Message.updateMany(
-    //       { sender: username, receiver: 'admin', isRead: false },
-    //       { isRead: true }
-    //     );
-
-    //     // If messages were marked as read, notify the sender
-    //     if (updatedMessages.modifiedCount > 0) {
-    //       // Get the updated messages to send back their new read status
-    //       const readMessages = await Message.find({
-    //         sender: username,
-    //         receiver: 'admin',
-    //         isRead: true
-    //       }).sort({ createdAt: 1 });
-
-    //       // Emit read status update to the sender
-    //       io.to(username).emit('messages:readStatusUpdate', readMessages);
-    //     }
-
-    //     // Send updated unread count for this specific user
-    //     const unreadCount = await Message.countDocuments({
-    //       sender: username,
-    //       receiver: 'admin',
-    //       isRead: false
-    //     });
-
-    //     socket.emit('admin:unreadCountUpdate', { username, count: unreadCount });
-
-    //   } catch (error) {
-    //     console.error('Error fetching chat history:', error);
-    //   }
-    // });
 
     // Updated admin:selectUser handler
     socket.on('admin:selectUser', async (username) => {
@@ -1382,6 +1513,7 @@ const setupSocket = (server) => {
         }
       }
     })
+
 
     // Handle disconnection
     socket.on('disconnect', async () => {

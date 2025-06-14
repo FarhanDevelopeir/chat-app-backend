@@ -27,11 +27,17 @@ const groupSchema = new mongoose.Schema({
   lastMessageTime: {
     type: Date,
     default: Date.now
+  },
+  lastActivity: {
+    type: Date,
+    default: Date.now
   }
 });
 
 // Index for better performance
 groupSchema.index({ members: 1 });
 groupSchema.index({ createdAt: -1 });
+groupSchema.index({ lastActivity: -1 });
+
 
 module.exports = mongoose.model('Group', groupSchema);
