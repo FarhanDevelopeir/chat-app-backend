@@ -117,153 +117,6 @@ const setupSocket = (server) => {
         socket.emit('group:updated', { success: false, message: 'Error updating group' });
       }
     });
-    // Get user's groups
-    // socket.on('groups:fetch', async (data) => {
-    //   try {
-    //     const { username } = data;
-    //     const Group = require('../models/group');
-
-    //     const userGroups = await Group.find({
-    //       members: username
-    //     }).sort({ createdAt: -1 });
-
-
-    //     socket.emit('groups:list', userGroups);
-
-    //   } catch (error) {
-    //     console.error('Error fetching groups:', error);
-    //     socket.emit('groups:error', { message: 'Failed to fetch groups' });
-    //   }
-    // });
-
-
-
-
-
-
-    // // Updated group join handler (if you have groups)
-    // socket.on('group:join', async (groupId) => {
-    //   try {
-    //     socket.join(groupId);
-
-    //     const page = 1;
-    //     const limit = 12;
-    //     const skip = (page - 1) * limit;
-
-    //     // Get total count for pagination
-    //     const totalMessages = await Message.countDocuments({ groupId });
-
-    //     // Get paginated messages
-    //     const messages = await Message.find({ groupId })
-    //       .sort({ createdAt: -1 })
-    //       .skip(skip)
-    //       .limit(limit)
-    //       .then(msgs => msgs.reverse());
-
-    //     const hasMore = totalMessages > (page * limit);
-
-    //     socket.emit('messages:history', {
-    //       messages,
-    //       hasMore,
-    //       page,
-    //       total: totalMessages
-    //     });
-
-    //     // Mark group messages as read
-    //     const username = socket.username;
-    //     if (username) {
-    //       await Message.updateMany(
-    //         { groupId, isRead: false },
-    //         { $addToSet: { readBy: username } }
-    //       );
-    //     }
-
-    //   } catch (error) {
-    //     console.error('Error joining group:', error);
-    //   }
-    // });
-
-    // // Send group message
-    // socket.on('group:sendMessage', async (data) => {
-    //   try {
-    //     const { content, sender, groupId, file, audio, replyTo } = data;
-    //     const Group = require('../models/group');
-
-    //     // Verify user is a member of the group
-    //     const group = await Group.findById(groupId);
-    //     if (!group || !group.members.includes(sender)) {
-    //       socket.emit('group:messageError', { message: 'Access denied' });
-    //       return;
-    //     }
-
-    //     const newMessage = new Message({
-    //       content,
-    //       sender,
-    //       receiver: null, // null for group messages
-    //       groupId,
-    //       file: file || undefined,
-    //       audio: audio || undefined,
-    //       isRead: false,
-    //       replyTo: replyTo || undefined,
-    //     });
-
-    //     await newMessage.save();
-
-    //     // Emit to all group members
-    //     io.to(groupId).emit('group:messageReceive', newMessage);
-
-    //     // Also emit back to sender for confirmation
-    //     socket.emit('group:messageSent', newMessage);
-
-    //   } catch (error) {
-    //     console.error('Error sending group message:', error);
-    //     socket.emit('group:messageError', { message: 'Failed to send message' });
-    //   }
-    // });
-
-    // Mark group messages as read
-
-    // socket.on('group:markRead', async (data) => {
-    //   try {
-    //     const { groupId, userId } = data;
-
-    //     const result = await Message.updateMany(
-    //       {
-    //         groupId: groupId,
-    //         sender: { $ne: userId },
-    //         isRead: false
-    //       },
-    //       { isRead: true }
-    //     );
-
-    //     // If messages were actually updated (marked as read)
-    //     if (result.modifiedCount > 0) {
-    //       // Get the updated messages that were just marked as read
-    //       const updatedMessages = await Message.find({
-    //         groupId: groupId,
-    //         sender: { $ne: userId },
-    //         isRead: true
-    //       }).sort({ createdAt: 1 });
-
-    //       // Emit the actual updated messages to all group members
-    //       io.to(groupId).emit('group:readStatusUpdate', {
-    //         groupId,
-    //         readBy: userId,
-    //         updatedMessages
-    //       });
-    //     }
-
-    //     // Optional: Emit a general update event
-    //     io.to(groupId).emit('messages:updated');
-
-    //   } catch (error) {
-    //     console.error('Error marking group messages as read:', error);
-    //   }
-    // });
-
-
-
-    // ADD THESE REQUIRES AT THE TOP OF YOUR SOCKET FILE (OUTSIDE OF ANY SOCKET HANDLERS)
 
 
     // Updated groups fetch handler - REMOVE require statements from inside
@@ -442,6 +295,40 @@ const setupSocket = (server) => {
         };
 
         await updateGroupsForAllMembers();
+
+
+        // // Update latest message for all group members
+        // for (const member of group.members) {
+        //   io.to(member).emit('user:latestMessageUpdate', {
+        //     [groupId]: newMessage
+        //   });
+        // }
+
+        // Update latest message for all group members
+        const messageForBroadcast = {
+          content: newMessage.content,
+          sender: newMessage.sender,
+          createdAt: newMessage.createdAt
+        };
+
+        for (const member of group.members) {
+          io.to(member).emit('user:latestMessageUpdate', {
+            [groupId.toString()]: messageForBroadcast
+          });
+
+          // Update unread count for members (except sender)
+          if (member !== sender) {
+            const unreadCount = await Message.countDocuments({
+              groupId: groupId,
+              sender: { $ne: member },
+              isRead: false
+            });
+
+            const updateObj = {};
+            updateObj[groupId.toString()] = unreadCount;
+            io.to(member).emit('user:unreadCountUpdate', updateObj);
+          }
+        }
 
       } catch (error) {
         console.error('Error sending group message:', error);
@@ -1250,17 +1137,70 @@ const setupSocket = (server) => {
         // Send back to sender for confirmation
         socket.emit('message:sent', newMessage);
 
-        // If message is sent to admin, update unread count
-        if (receiver === 'admin') {
-          const unreadCount = await Message.countDocuments({
-            sender: sender,
-            receiver: 'admin',
-            isRead: false
-          });
+        // // If message is sent to admin, update unread count
+        // if (receiver === 'admin') {
+        //   const unreadCount = await Message.countDocuments({
+        //     sender: sender,
+        //     receiver: 'admin',
+        //     isRead: false
+        //   });
 
-          // Send unread count update to all admin sockets
-          io.to('admin').emit('admin:unreadCountUpdate', { username: sender, count: unreadCount });
+        //   // Send unread count update to all admin sockets
+        //   io.to('admin').emit('admin:unreadCountUpdate', { username: sender, count: unreadCount });
+
+
+        // }
+
+        // show unread message length 
+
+        // Update latest message for both users
+        const messageForBroadcast = {
+          content: newMessage.content,
+          sender: newMessage.sender,
+          createdAt: newMessage.createdAt
+        };
+
+        // Update latest message for receiver
+        if (receiver === 'admin') {
+          io.to(receiver).emit('user:latestMessageUpdate', {
+            [sender]: messageForBroadcast
+          });
+          // Update for sender
+          io.to(sender).emit('user:latestMessageUpdate', {
+            'admin': messageForBroadcast
+          });
+        } else {
+          io.to(receiver).emit('user:latestMessageUpdate', {
+            'admin': messageForBroadcast
+          });
+          io.to(sender).emit('user:latestMessageUpdate', {
+            [receiver]: messageForBroadcast
+          });
         }
+
+        // Update unread count for receiver
+        if (receiver !== sender) {
+          if (receiver === 'admin') {
+            // Admin receiving message - update admin's unread count
+            const adminUnreadCount = await Message.countDocuments({
+              sender: sender,
+              receiver: 'admin',
+              isRead: false
+            });
+            io.to('admin').emit('admin:unreadCountUpdate', { username: sender, count: adminUnreadCount });
+          } else {
+            // User receiving message from admin - update user's unread count
+            const userUnreadCount = await Message.countDocuments({
+              sender: 'admin',
+              receiver: receiver,
+              isRead: false
+            });
+            io.to(receiver).emit('user:unreadCountUpdate', { 'admin': userUnreadCount });
+          }
+        }
+
+
+        //  close unread messages length
 
       } catch (error) {
         console.error('Error sending message:', error);
@@ -1513,6 +1453,177 @@ const setupSocket = (server) => {
         }
       }
     })
+
+    // show unread messages length
+    socket.on('user:getUnreadCounts', async (data) => {
+      try {
+        console.log('Getting unread counts for:', data.username);
+        const { username } = data;
+        const unreadCounts = {};
+
+        // Get admin chat unread count
+        const adminUnreadCount = await Message.countDocuments({
+          sender: 'admin',
+          receiver: username,
+          isRead: false
+        });
+        console.log('Admin unread count:', adminUnreadCount);
+
+        if (adminUnreadCount > 0) {
+          unreadCounts['admin'] = adminUnreadCount;
+        }
+
+        // Get group unread counts
+        const userGroups = await Group.find({ members: username });
+        for (const group of userGroups) {
+          const groupUnreadCount = await Message.countDocuments({
+            groupId: group._id,
+            sender: { $ne: username },
+            isRead: false
+          });
+          console.log(`Group ${group.name} unread count:`, groupUnreadCount);
+
+          if (groupUnreadCount > 0) {
+            unreadCounts[group._id.toString()] = groupUnreadCount;
+          }
+        }
+
+        console.log('Sending unread counts:', unreadCounts);
+        socket.emit('user:unreadCounts', unreadCounts);
+
+      } catch (error) {
+        console.error('Error getting unread counts:', error);
+      }
+    });
+
+    // Get latest messages for user
+    socket.on('user:getLatestMessages', async (data) => {
+      try {
+        console.log('Getting latest messages for:', data.username);
+        const { username } = data;
+        const latestMessages = {};
+
+        // Get latest admin message
+        const latestAdminMessage = await Message.findOne({
+          $or: [
+            { sender: 'admin', receiver: username },
+            { sender: username, receiver: 'admin' }
+          ]
+        }).sort({ createdAt: -1 });
+
+        if (latestAdminMessage) {
+          latestMessages['admin'] = {
+            content: latestAdminMessage.content,
+            sender: latestAdminMessage.sender,
+            createdAt: latestAdminMessage.createdAt
+          };
+        }
+
+        // Get latest group messages
+        const userGroups = await Group.find({ members: username });
+        for (const group of userGroups) {
+          const latestGroupMessage = await Message.findOne({
+            groupId: group._id
+          }).sort({ createdAt: -1 });
+
+          if (latestGroupMessage) {
+            latestMessages[group._id.toString()] = {
+              content: latestGroupMessage.content,
+              sender: latestGroupMessage.sender,
+              createdAt: latestGroupMessage.createdAt
+            };
+          }
+        }
+
+        console.log('Sending latest messages:', latestMessages);
+        socket.emit('user:latestMessages', latestMessages);
+
+      } catch (error) {
+        console.error('Error getting latest messages:', error);
+      }
+    });
+
+    // Mark chat as read - NEW HANDLER
+    socket.on('user:markChatAsRead', async (data) => {
+      try {
+        const { username, chatId, chatType } = data;
+        console.log('Marking chat as read:', { username, chatId, chatType });
+
+        if (chatType === 'admin') {
+          // Mark admin messages as read
+          const result = await Message.updateMany(
+            { sender: 'admin', receiver: username, isRead: false },
+            { isRead: true }
+          );
+          console.log('Marked admin messages as read:', result.modifiedCount);
+
+          // Send updated unread count (should be 0)
+          socket.emit('user:unreadCountUpdate', { 'admin': 0 });
+
+        } else if (chatType === 'group') {
+          // Mark group messages as read
+          const result = await Message.updateMany(
+            { groupId: chatId, sender: { $ne: username }, isRead: false },
+            { isRead: true }
+          );
+          console.log('Marked group messages as read:', result.modifiedCount);
+
+          // Send updated unread count (should be 0)
+          const updateObj = {};
+          updateObj[chatId] = 0;
+          socket.emit('user:unreadCountUpdate', updateObj);
+        }
+
+      } catch (error) {
+        console.error('Error marking chat as read:', error);
+      }
+    });
+
+
+
+    // Update unread count
+    socket.on('user:updateUnreadCount', async (data) => {
+      try {
+        const { username, chatId, increment, reset } = data;
+
+        if (reset) {
+          // Mark messages as read
+          if (chatId === 'admin') {
+            await Message.updateMany(
+              { sender: 'admin', receiver: username, isRead: false },
+              { isRead: true }
+            );
+          } else {
+            await Message.updateMany(
+              { groupId: chatId, sender: { $ne: username }, isRead: false },
+              { isRead: true }
+            );
+          }
+        }
+
+        // Get updated unread count
+        let unreadCount = 0;
+        if (chatId === 'admin') {
+          unreadCount = await Message.countDocuments({
+            sender: 'admin',
+            receiver: username,
+            isRead: false
+          });
+        } else {
+          unreadCount = await Message.countDocuments({
+            groupId: chatId,
+            sender: { $ne: username },
+            isRead: false
+          });
+        }
+
+        socket.emit('user:unreadCountUpdate', { [chatId]: unreadCount });
+      } catch (error) {
+        console.error('Error updating unread count:', error);
+      }
+    });
+
+    // close unread messages length
 
 
     // Handle disconnection
