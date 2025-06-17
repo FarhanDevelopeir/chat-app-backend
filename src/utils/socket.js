@@ -1543,6 +1543,79 @@ const setupSocket = (server) => {
       }
     });
 
+    // Get latest messages for user
+    socket.on('admin:getLatestMessages', async (data) => {
+      try {
+        console.log('Getting latest messages for:', data.username);
+        const { username } = data;
+        const latestMessages = {};
+
+        if (username === 'admin') {
+          // If admin is requesting, get latest messages with all users
+          console.log('Admin requesting messages - getting all user conversations');
+
+          // Get all unique users who have exchanged messages with admin
+          const adminMessages = await Message.find({
+            $or: [
+              { sender: 'admin' },
+              { receiver: 'admin' }
+            ]
+          }).select('sender receiver');
+
+          // Extract unique usernames (excluding admin)
+          const uniqueUsers = new Set();
+          adminMessages.forEach(msg => {
+            if (msg.sender !== 'admin') uniqueUsers.add(msg.sender);
+            if (msg.receiver !== 'admin') uniqueUsers.add(msg.receiver);
+          });
+
+          // Get latest message for each user
+          for (const user of uniqueUsers) {
+            const latestUserMessage = await Message.findOne({
+              $or: [
+                { sender: 'admin', receiver: user },
+                { sender: user, receiver: 'admin' }
+              ]
+            }).sort({ createdAt: -1 });
+
+            if (latestUserMessage) {
+              latestMessages[user] = {
+                content: latestUserMessage.content,
+                sender: latestUserMessage.sender,
+                createdAt: latestUserMessage.createdAt
+              };
+            }
+          }
+
+          // Also get latest group messages for admin
+          const adminGroups = await Group.find({ members: 'admin' });
+          for (const group of adminGroups) {
+            const latestGroupMessage = await Message.findOne({
+              groupId: group._id
+            }).sort({ createdAt: -1 });
+
+            if (latestGroupMessage) {
+              latestMessages[group._id.toString()] = {
+                content: latestGroupMessage.content,
+                sender: latestGroupMessage.sender,
+                createdAt: latestGroupMessage.createdAt,
+                groupName: group.name // Optional: include group name for admin
+              };
+            }
+          }
+
+        }
+
+
+        console.log('Sending latest messages:', latestMessages);
+        socket.emit('admin:latestMessages', latestMessages);
+
+      } catch (error) {
+        console.error('Error getting latest messages:', error);
+      }
+    });
+
+
     // Mark chat as read - NEW HANDLER
     socket.on('user:markChatAsRead', async (data) => {
       try {
