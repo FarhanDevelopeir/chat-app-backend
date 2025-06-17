@@ -799,7 +799,7 @@ const setupSocket = (server) => {
           }).sort({ createdAt: -1 });
 
           socket.emit('groups:list', userGroups);
-        } catch (error) {
+        } catch (error) { 
           console.error('Error fetching user groups:', error);
         }
 
