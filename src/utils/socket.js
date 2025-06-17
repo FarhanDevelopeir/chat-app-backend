@@ -3,6 +3,8 @@ const User = require('../models/User');
 const Group = require('../models/group');
 const Message = require('../models/Message');
 const admin = require('../models/admin');
+const fetch = require('node-fetch');
+
 
 require('dotenv').config();
 
@@ -684,6 +686,36 @@ const setupSocket = (server) => {
       return userIP || 'unknown';
     }
 
+    const getUserLocation = async (ip) => {
+      try {
+        if (ip === 'localhost' || ip === 'unknown') {
+          ip = '103.53.162.42'; // fallback for dev
+        }
+
+        const ipAddress = '103.53.162.42'
+
+        const res = await fetch(`http://ip-api.com/json/${ipAddress}`);
+        const data = await res.json();
+
+        if (data.status === 'success') {
+          return {
+            city: data.city,
+            region: data.regionName,
+            country: data.country,
+            isp: data.isp,
+            lat: data.lat,
+            lon: data.lon,
+          };
+        } else {
+          return { error: 'Location not found' };
+        }
+      } catch (err) {
+        return { error: 'Error fetching location' };
+      }
+    };
+
+    
+
     // User authentication/login
     socket.on('user:login', async ({ username, password, deviceId }) => {
       console.log('User login attempt:', username, password);
@@ -692,7 +724,7 @@ const setupSocket = (server) => {
 
 
         const userIP = getUserIP(socket);
-        console.log('User IP:', userIP);
+        // const location = await getUserLocation(userIP);
 
         // Find or create user
         let user = await User.findOne({ username, password });
