@@ -19,6 +19,10 @@ const UserSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  isPasswordChanged: {
+    type: Boolean,
+    default: false
+  },
   isOnline: {
     type: Boolean,
     default: false

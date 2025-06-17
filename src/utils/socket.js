@@ -623,6 +623,7 @@ const setupSocket = (server) => {
 
         // Update user fields
         user.username = username;
+        user.isPasswordChanged = true
         if (password && password.trim()) {
           user.password = password;
         }
@@ -718,6 +719,7 @@ const setupSocket = (server) => {
         user.isOnline = true;
         user.lastSeen = Date.now();
         user.ipAddress = userIP;
+        user.isPasswordChanged = false
         await user.save();
 
         // Store username on socket for group functionality
@@ -809,6 +811,13 @@ const setupSocket = (server) => {
         if (!user) {
           socket.emit('user:loginError', {
             error: 'Invalid username or password'
+          });
+          return;
+        }
+
+        if (user.isPasswordChanged) {
+          socket.emit('user:PasswordChangedError', {
+            error: 'Your password has been changed, please contact Admin'
           });
           return;
         }
