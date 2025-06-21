@@ -44,7 +44,21 @@ const MessageSchema = new mongoose.Schema({
     data: { type: String },  // Base64 encoded audio data
     size: { type: Number },
     duration: { type: Number }  // Optional: Duration in seconds
-  }
+  },
+    // Pin-related fields
+  isPinned: {
+    type: Boolean,
+    default: false
+  },
+  pinnedBy: {
+    type: String,
+    default: null
+  },
+  pinnedAt: {
+    type: Date,
+    default: null
+  },
+  
 }, { timestamps: true });
 
 // Indexes for better performance

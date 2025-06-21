@@ -1740,6 +1740,198 @@ const setupSocket = (server) => {
     // close unread messages length
 
 
+    // Add these socket event handlers in your backend
+
+// Pin message for direct chat
+socket.on('message:pin', async (data) => {
+  try {
+    const { messageId, sender, receiver, pinnedBy } = data;
+    
+    // First unpin any existing pinned message in this chat
+    await Message.updateMany(
+      {
+        $or: [
+          { sender: sender, receiver: receiver },
+          { sender: receiver, receiver: sender }
+        ],
+        isPinned: true
+      },
+      { 
+        isPinned: false, 
+        pinnedBy: null,
+        pinnedAt: null 
+      }
+    );
+
+    // Pin the new message
+    const pinnedMessage = await Message.findByIdAndUpdate(
+      messageId,
+      { 
+        isPinned: true, 
+        pinnedBy: pinnedBy,
+        pinnedAt: new Date()
+      },
+      { new: true }
+    );
+
+    if (pinnedMessage) {
+      // Emit to both sender and receiver
+      io.to(sender).emit('message:pinned', { message: pinnedMessage });
+      io.to(receiver).emit('message:pinned', { message: pinnedMessage });
+    }
+
+  } catch (error) {
+    console.error('Error pinning message:', error);
+    socket.emit('message:error', { error: 'Failed to pin message' });
+  }
+});
+
+// Unpin message for direct chat
+socket.on('message:unpin', async (data) => {
+  try {
+    const { messageId, sender, receiver } = data;
+    
+    const unpinnedMessage = await Message.findByIdAndUpdate(
+      messageId,
+      { 
+        isPinned: false, 
+        pinnedBy: null,
+        pinnedAt: null 
+      },
+      { new: true }
+    );
+
+    if (unpinnedMessage) {
+      // Emit to both sender and receiver
+      io.to(sender).emit('message:unpinned', { messageId });
+      io.to(receiver).emit('message:unpinned', { messageId });
+    }
+
+  } catch (error) {
+    console.error('Error unpinning message:', error);
+    socket.emit('message:error', { error: 'Failed to unpin message' });
+  }
+});
+
+// Get pinned message for direct chat
+socket.on('message:getPinnedMessage', async (data) => {
+  try {
+    const { sender, receiver } = data;
+    
+    const pinnedMessage = await Message.findOne({
+      $or: [
+        { sender: sender, receiver: receiver },
+        { sender: receiver, receiver: sender }
+      ],
+      isPinned: true
+    });
+
+    if (pinnedMessage) {
+      socket.emit('message:pinned', { message: pinnedMessage });
+    }
+
+  } catch (error) {
+    console.error('Error getting pinned message:', error);
+  }
+});
+
+// Pin message for group chat
+socket.on('group:pinMessage', async (data) => {
+  try {
+    const { messageId, groupId, pinnedBy } = data;
+    
+    // Verify user is a member of the group
+    const group = await Group.findById(groupId);
+    if (!group || !group.members.includes(pinnedBy)) {
+      socket.emit('group:error', { message: 'Access denied' });
+      return;
+    }
+
+    // Unpin any existing pinned message in this group
+    await Message.updateMany(
+      { groupId: groupId, isPinned: true },
+      { 
+        isPinned: false, 
+        pinnedBy: null,
+        pinnedAt: null 
+      }
+    );
+
+    // Pin the new message
+    const pinnedMessage = await Message.findByIdAndUpdate(
+      messageId,
+      { 
+        isPinned: true, 
+        pinnedBy: pinnedBy,
+        pinnedAt: new Date()
+      },
+      { new: true }
+    );
+
+    if (pinnedMessage) {
+      // Emit to all group members
+      io.to(groupId).emit('group:messagePinned', { message: pinnedMessage });
+    }
+
+  } catch (error) {
+    console.error('Error pinning group message:', error);
+    socket.emit('group:error', { error: 'Failed to pin message' });
+  }
+});
+
+// Unpin message for group chat
+socket.on('group:unpinMessage', async (data) => {
+  try {
+    const { messageId, groupId, unpinnedBy } = data;
+    
+    // Verify user is a member of the group
+    const group = await Group.findById(groupId);
+    if (!group || !group.members.includes(unpinnedBy)) {
+      socket.emit('group:error', { message: 'Access denied' });
+      return;
+    }
+
+    const unpinnedMessage = await Message.findByIdAndUpdate(
+      messageId,
+      { 
+        isPinned: false, 
+        pinnedBy: null,
+        pinnedAt: null 
+      },
+      { new: true }
+    );
+
+    if (unpinnedMessage) {
+      // Emit to all group members
+      io.to(groupId).emit('group:messageUnpinned', { messageId });
+    }
+
+  } catch (error) {
+    console.error('Error unpinning group message:', error);
+    socket.emit('group:error', { error: 'Failed to unpin message' });
+  }
+});
+
+// Get pinned message for group chat
+socket.on('group:getPinnedMessage', async (data) => {
+  try {
+    const { groupId } = data;
+    
+    const pinnedMessage = await Message.findOne({
+      groupId: groupId,
+      isPinned: true
+    });
+
+    if (pinnedMessage) {
+      socket.emit('group:messagePinned', { message: pinnedMessage });
+    }
+
+  } catch (error) {
+    console.error('Error getting pinned group message:', error);
+  }
+});
+
+
     // Handle disconnection
     socket.on('disconnect', async () => {
       console.log('User disconnected:', socket.id);
