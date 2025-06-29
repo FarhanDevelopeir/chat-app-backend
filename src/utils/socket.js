@@ -300,7 +300,7 @@ const setupSocket = (server) => {
         await updateGroupsForAllMembers();
 
 
-       
+
         // Update latest message for all group members
         const messageForBroadcast = {
           content: newMessage.content,
@@ -778,7 +778,7 @@ const setupSocket = (server) => {
         // Emit updated user data back to the user
         socket.emit('user:profileUpdated', user);
 
-       
+
 
         console.log('Profile updated successfully for user:', username);
 
@@ -1331,7 +1331,7 @@ const setupSocket = (server) => {
         // Emit updated user data back to the user
         socket.emit('admin:profileUpdated', Admin);
 
-       
+
 
         console.log('Profile updated successfully for user:', username);
 
@@ -1459,11 +1459,9 @@ const setupSocket = (server) => {
         socket.emit('subadmin:profiledata', subAdmin);
 
         // Send list of users excluding this subadmin
-        const users = await User.find(
-          { username: { $ne: username } },
-          'username isOnline lastSeen profilePicture ipAddress'
-        );
-        socket.emit('subadmin:userList', users);
+        const users = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
+        const filteredUsers = filterNonSubAdmins(users);
+        socket.emit('subadmin:userList', filteredUsers);
 
         // Send groups the subadmin is part of
         const Group = require('../models/group');
@@ -1733,11 +1731,9 @@ const setupSocket = (server) => {
       }
 
       // Send user list to admin
-      const users = await User.find(
-        { username: { $ne: username } },
-        'username isOnline lastSeen profilePicture ipAddress'
-      );
-      socket.emit('subadmin:userList', users);
+      const users = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
+      const filteredUsers = filterNonSubAdmins(users);
+      socket.emit('subadmin:userList', filteredUsers);
 
       // Send groups the subadmin is part of
       const Group = require('../models/group');
@@ -2575,310 +2571,310 @@ const setupSocket = (server) => {
 
     // Add these socket event handlers in your backend
 
-// Pin message for direct chat
-socket.on('message:pin', async (data) => {
-  try {
-    const { messageId, sender, receiver, pinnedBy } = data;
-    
-    // First unpin any existing pinned message in this chat
-    await Message.updateMany(
-      {
-        $or: [
-          { sender: sender, receiver: receiver },
-          { sender: receiver, receiver: sender }
-        ],
-        isPinned: true
-      },
-      { 
-        isPinned: false, 
-        pinnedBy: null,
-        pinnedAt: null 
+    // Pin message for direct chat
+    socket.on('message:pin', async (data) => {
+      try {
+        const { messageId, sender, receiver, pinnedBy } = data;
+
+        // First unpin any existing pinned message in this chat
+        await Message.updateMany(
+          {
+            $or: [
+              { sender: sender, receiver: receiver },
+              { sender: receiver, receiver: sender }
+            ],
+            isPinned: true
+          },
+          {
+            isPinned: false,
+            pinnedBy: null,
+            pinnedAt: null
+          }
+        );
+
+        // Pin the new message
+        const pinnedMessage = await Message.findByIdAndUpdate(
+          messageId,
+          {
+            isPinned: true,
+            pinnedBy: pinnedBy,
+            pinnedAt: new Date()
+          },
+          { new: true }
+        );
+
+        if (pinnedMessage) {
+          // Emit to both sender and receiver
+          io.to(sender).emit('message:pinned', { message: pinnedMessage });
+          io.to(receiver).emit('message:pinned', { message: pinnedMessage });
+        }
+
+      } catch (error) {
+        console.error('Error pinning message:', error);
+        socket.emit('message:error', { error: 'Failed to pin message' });
       }
-    );
-
-    // Pin the new message
-    const pinnedMessage = await Message.findByIdAndUpdate(
-      messageId,
-      { 
-        isPinned: true, 
-        pinnedBy: pinnedBy,
-        pinnedAt: new Date()
-      },
-      { new: true }
-    );
-
-    if (pinnedMessage) {
-      // Emit to both sender and receiver
-      io.to(sender).emit('message:pinned', { message: pinnedMessage });
-      io.to(receiver).emit('message:pinned', { message: pinnedMessage });
-    }
-
-  } catch (error) {
-    console.error('Error pinning message:', error);
-    socket.emit('message:error', { error: 'Failed to pin message' });
-  }
-});
-
-// Unpin message for direct chat
-socket.on('message:unpin', async (data) => {
-  try {
-    const { messageId, sender, receiver } = data;
-    
-    const unpinnedMessage = await Message.findByIdAndUpdate(
-      messageId,
-      { 
-        isPinned: false, 
-        pinnedBy: null,
-        pinnedAt: null 
-      },
-      { new: true }
-    );
-
-    if (unpinnedMessage) {
-      // Emit to both sender and receiver
-      io.to(sender).emit('message:unpinned', { messageId });
-      io.to(receiver).emit('message:unpinned', { messageId });
-    }
-
-  } catch (error) {
-    console.error('Error unpinning message:', error);
-    socket.emit('message:error', { error: 'Failed to unpin message' });
-  }
-});
-
-// Get pinned message for direct chat
-socket.on('message:getPinnedMessage', async (data) => {
-  try {
-    const { sender, receiver } = data;
-    
-    const pinnedMessage = await Message.findOne({
-      $or: [
-        { sender: sender, receiver: receiver },
-        { sender: receiver, receiver: sender }
-      ],
-      isPinned: true
     });
 
-    if (pinnedMessage) {
-      socket.emit('message:pinned', { message: pinnedMessage });
-    }
+    // Unpin message for direct chat
+    socket.on('message:unpin', async (data) => {
+      try {
+        const { messageId, sender, receiver } = data;
 
-  } catch (error) {
-    console.error('Error getting pinned message:', error);
-  }
-});
+        const unpinnedMessage = await Message.findByIdAndUpdate(
+          messageId,
+          {
+            isPinned: false,
+            pinnedBy: null,
+            pinnedAt: null
+          },
+          { new: true }
+        );
 
-// Pin message for group chat
-socket.on('group:pinMessage', async (data) => {
-  try {
-    const { messageId, groupId, pinnedBy } = data;
-    
-    // Verify user is a member of the group
-    const group = await Group.findById(groupId);
-    if (!group || !group.members.includes(pinnedBy)) {
-      socket.emit('group:error', { message: 'Access denied' });
-      return;
-    }
+        if (unpinnedMessage) {
+          // Emit to both sender and receiver
+          io.to(sender).emit('message:unpinned', { messageId });
+          io.to(receiver).emit('message:unpinned', { messageId });
+        }
 
-    // Unpin any existing pinned message in this group
-    await Message.updateMany(
-      { groupId: groupId, isPinned: true },
-      { 
-        isPinned: false, 
-        pinnedBy: null,
-        pinnedAt: null 
+      } catch (error) {
+        console.error('Error unpinning message:', error);
+        socket.emit('message:error', { error: 'Failed to unpin message' });
       }
-    );
-
-    // Pin the new message
-    const pinnedMessage = await Message.findByIdAndUpdate(
-      messageId,
-      { 
-        isPinned: true, 
-        pinnedBy: pinnedBy,
-        pinnedAt: new Date()
-      },
-      { new: true }
-    );
-
-    if (pinnedMessage) {
-      // Emit to all group members
-      io.to(groupId).emit('group:messagePinned', { message: pinnedMessage });
-    }
-
-  } catch (error) {
-    console.error('Error pinning group message:', error);
-    socket.emit('group:error', { error: 'Failed to pin message' });
-  }
-});
-
-// Unpin message for group chat
-socket.on('group:unpinMessage', async (data) => {
-  try {
-    const { messageId, groupId, unpinnedBy } = data;
-    
-    // Verify user is a member of the group
-    const group = await Group.findById(groupId);
-    if (!group || !group.members.includes(unpinnedBy)) {
-      socket.emit('group:error', { message: 'Access denied' });
-      return;
-    }
-
-    const unpinnedMessage = await Message.findByIdAndUpdate(
-      messageId,
-      { 
-        isPinned: false, 
-        pinnedBy: null,
-        pinnedAt: null 
-      },
-      { new: true }
-    );
-
-    if (unpinnedMessage) {
-      // Emit to all group members
-      io.to(groupId).emit('group:messageUnpinned', { messageId });
-    }
-
-  } catch (error) {
-    console.error('Error unpinning group message:', error);
-    socket.emit('group:error', { error: 'Failed to unpin message' });
-  }
-});
-
-// Get pinned message for group chat
-socket.on('group:getPinnedMessage', async (data) => {
-  try {
-    const { groupId } = data;
-    
-    const pinnedMessage = await Message.findOne({
-      groupId: groupId,
-      isPinned: true
     });
 
-    if (pinnedMessage) {
-      socket.emit('group:messagePinned', { message: pinnedMessage });
-    }
+    // Get pinned message for direct chat
+    socket.on('message:getPinnedMessage', async (data) => {
+      try {
+        const { sender, receiver } = data;
 
-  } catch (error) {
-    console.error('Error getting pinned group message:', error);
-  }
-});
+        const pinnedMessage = await Message.findOne({
+          $or: [
+            { sender: sender, receiver: receiver },
+            { sender: receiver, receiver: sender }
+          ],
+          isPinned: true
+        });
 
+        if (pinnedMessage) {
+          socket.emit('message:pinned', { message: pinnedMessage });
+        }
 
-// Pin message for subadmin-user chat
-socket.on('subadmin:pinMessage', async (data) => {
-  try {
-    const { messageId, sender, receiver, pinnedBy } = data;
-    
-    // Verify that one of them is a subadmin
-    const senderUser = await User.findOne({ username: sender });
-    const receiverUser = await User.findOne({ username: receiver });
-    
-    if (!senderUser || !receiverUser || 
-        !(senderUser.isSubAdmin || receiverUser.isSubAdmin)) {
-      socket.emit('subadmin:error', { message: 'Access denied - SubAdmin required' });
-      return;
-    }
-
-    // First unpin any existing pinned message in this subadmin-user chat
-    await Message.updateMany(
-      {
-        $or: [
-          { sender: sender, receiver: receiver },
-          { sender: receiver, receiver: sender }
-        ],
-        isPinned: true,
-        groupId: null // Ensure it's not a group message
-      },
-      { 
-        isPinned: false, 
-        pinnedBy: null,
-        pinnedAt: null 
+      } catch (error) {
+        console.error('Error getting pinned message:', error);
       }
-    );
-
-    // Pin the new message
-    const pinnedMessage = await Message.findByIdAndUpdate(
-      messageId,
-      { 
-        isPinned: true, 
-        pinnedBy: pinnedBy,
-        pinnedAt: new Date()
-      },
-      { new: true }
-    );
-
-    if (pinnedMessage) {
-      // Emit to both sender and receiver
-      io.to(sender).emit('subadmin:messagePinned', { message: pinnedMessage });
-      io.to(receiver).emit('subadmin:messagePinned', { message: pinnedMessage });
-    }
-
-  } catch (error) {
-    console.error('Error pinning subadmin message:', error);
-    socket.emit('subadmin:error', { error: 'Failed to pin message' });
-  }
-});
-
-// Unpin message for subadmin-user chat
-socket.on('subadmin:unpinMessage', async (data) => {
-  try {
-    const { messageId, sender, receiver, unpinnedBy } = data;
-    
-    // Verify that one of them is a subadmin
-    const senderUser = await User.findOne({ username: sender });
-    const receiverUser = await User.findOne({ username: receiver });
-    
-    if (!senderUser || !receiverUser || 
-        !(senderUser.isSubAdmin || receiverUser.isSubAdmin)) {
-      socket.emit('subadmin:error', { message: 'Access denied - SubAdmin required' });
-      return;
-    }
-    
-    const unpinnedMessage = await Message.findByIdAndUpdate(
-      messageId,
-      { 
-        isPinned: false, 
-        pinnedBy: null,
-        pinnedAt: null 
-      },
-      { new: true }
-    );
-
-    if (unpinnedMessage) {
-      // Emit to both sender and receiver
-      io.to(sender).emit('subadmin:messageUnpinned', { messageId });
-      io.to(receiver).emit('subadmin:messageUnpinned', { messageId });
-    }
-
-  } catch (error) {
-    console.error('Error unpinning subadmin message:', error);
-    socket.emit('subadmin:error', { error: 'Failed to unpin message' });
-  }
-});
-
-// Get pinned message for subadmin-user chat
-socket.on('subadmin:getPinnedMessage', async (data) => {
-  try {
-    const { sender, receiver } = data;
-    
-    const pinnedMessage = await Message.findOne({
-      $or: [
-        { sender: sender, receiver: receiver },
-        { sender: receiver, receiver: sender }
-      ],
-      isPinned: true,
-      groupId: null // Ensure it's not a group message
     });
 
-    if (pinnedMessage) {
-      socket.emit('subadmin:messagePinned', { message: pinnedMessage });
-    }
+    // Pin message for group chat
+    socket.on('group:pinMessage', async (data) => {
+      try {
+        const { messageId, groupId, pinnedBy } = data;
 
-  } catch (error) {
-    console.error('Error getting pinned subadmin message:', error);
-  }
-});
+        // Verify user is a member of the group
+        const group = await Group.findById(groupId);
+        if (!group || !group.members.includes(pinnedBy)) {
+          socket.emit('group:error', { message: 'Access denied' });
+          return;
+        }
+
+        // Unpin any existing pinned message in this group
+        await Message.updateMany(
+          { groupId: groupId, isPinned: true },
+          {
+            isPinned: false,
+            pinnedBy: null,
+            pinnedAt: null
+          }
+        );
+
+        // Pin the new message
+        const pinnedMessage = await Message.findByIdAndUpdate(
+          messageId,
+          {
+            isPinned: true,
+            pinnedBy: pinnedBy,
+            pinnedAt: new Date()
+          },
+          { new: true }
+        );
+
+        if (pinnedMessage) {
+          // Emit to all group members
+          io.to(groupId).emit('group:messagePinned', { message: pinnedMessage });
+        }
+
+      } catch (error) {
+        console.error('Error pinning group message:', error);
+        socket.emit('group:error', { error: 'Failed to pin message' });
+      }
+    });
+
+    // Unpin message for group chat
+    socket.on('group:unpinMessage', async (data) => {
+      try {
+        const { messageId, groupId, unpinnedBy } = data;
+
+        // Verify user is a member of the group
+        const group = await Group.findById(groupId);
+        if (!group || !group.members.includes(unpinnedBy)) {
+          socket.emit('group:error', { message: 'Access denied' });
+          return;
+        }
+
+        const unpinnedMessage = await Message.findByIdAndUpdate(
+          messageId,
+          {
+            isPinned: false,
+            pinnedBy: null,
+            pinnedAt: null
+          },
+          { new: true }
+        );
+
+        if (unpinnedMessage) {
+          // Emit to all group members
+          io.to(groupId).emit('group:messageUnpinned', { messageId });
+        }
+
+      } catch (error) {
+        console.error('Error unpinning group message:', error);
+        socket.emit('group:error', { error: 'Failed to unpin message' });
+      }
+    });
+
+    // Get pinned message for group chat
+    socket.on('group:getPinnedMessage', async (data) => {
+      try {
+        const { groupId } = data;
+
+        const pinnedMessage = await Message.findOne({
+          groupId: groupId,
+          isPinned: true
+        });
+
+        if (pinnedMessage) {
+          socket.emit('group:messagePinned', { message: pinnedMessage });
+        }
+
+      } catch (error) {
+        console.error('Error getting pinned group message:', error);
+      }
+    });
+
+
+    // Pin message for subadmin-user chat
+    socket.on('subadmin:pinMessage', async (data) => {
+      try {
+        const { messageId, sender, receiver, pinnedBy } = data;
+
+        // Verify that one of them is a subadmin
+        const senderUser = await User.findOne({ username: sender });
+        const receiverUser = await User.findOne({ username: receiver });
+
+        if (!senderUser || !receiverUser ||
+          !(senderUser.isSubAdmin || receiverUser.isSubAdmin)) {
+          socket.emit('subadmin:error', { message: 'Access denied - SubAdmin required' });
+          return;
+        }
+
+        // First unpin any existing pinned message in this subadmin-user chat
+        await Message.updateMany(
+          {
+            $or: [
+              { sender: sender, receiver: receiver },
+              { sender: receiver, receiver: sender }
+            ],
+            isPinned: true,
+            groupId: null // Ensure it's not a group message
+          },
+          {
+            isPinned: false,
+            pinnedBy: null,
+            pinnedAt: null
+          }
+        );
+
+        // Pin the new message
+        const pinnedMessage = await Message.findByIdAndUpdate(
+          messageId,
+          {
+            isPinned: true,
+            pinnedBy: pinnedBy,
+            pinnedAt: new Date()
+          },
+          { new: true }
+        );
+
+        if (pinnedMessage) {
+          // Emit to both sender and receiver
+          io.to(sender).emit('subadmin:messagePinned', { message: pinnedMessage });
+          io.to(receiver).emit('subadmin:messagePinned', { message: pinnedMessage });
+        }
+
+      } catch (error) {
+        console.error('Error pinning subadmin message:', error);
+        socket.emit('subadmin:error', { error: 'Failed to pin message' });
+      }
+    });
+
+    // Unpin message for subadmin-user chat
+    socket.on('subadmin:unpinMessage', async (data) => {
+      try {
+        const { messageId, sender, receiver, unpinnedBy } = data;
+
+        // Verify that one of them is a subadmin
+        const senderUser = await User.findOne({ username: sender });
+        const receiverUser = await User.findOne({ username: receiver });
+
+        if (!senderUser || !receiverUser ||
+          !(senderUser.isSubAdmin || receiverUser.isSubAdmin)) {
+          socket.emit('subadmin:error', { message: 'Access denied - SubAdmin required' });
+          return;
+        }
+
+        const unpinnedMessage = await Message.findByIdAndUpdate(
+          messageId,
+          {
+            isPinned: false,
+            pinnedBy: null,
+            pinnedAt: null
+          },
+          { new: true }
+        );
+
+        if (unpinnedMessage) {
+          // Emit to both sender and receiver
+          io.to(sender).emit('subadmin:messageUnpinned', { messageId });
+          io.to(receiver).emit('subadmin:messageUnpinned', { messageId });
+        }
+
+      } catch (error) {
+        console.error('Error unpinning subadmin message:', error);
+        socket.emit('subadmin:error', { error: 'Failed to unpin message' });
+      }
+    });
+
+    // Get pinned message for subadmin-user chat
+    socket.on('subadmin:getPinnedMessage', async (data) => {
+      try {
+        const { sender, receiver } = data;
+
+        const pinnedMessage = await Message.findOne({
+          $or: [
+            { sender: sender, receiver: receiver },
+            { sender: receiver, receiver: sender }
+          ],
+          isPinned: true,
+          groupId: null // Ensure it's not a group message
+        });
+
+        if (pinnedMessage) {
+          socket.emit('subadmin:messagePinned', { message: pinnedMessage });
+        }
+
+      } catch (error) {
+        console.error('Error getting pinned subadmin message:', error);
+      }
+    });
 
 
     // Handle disconnection
