@@ -507,7 +507,8 @@ const setupSocket = (server) => {
 
         // Send user list to admin
         const allUsersRaw = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
-        const allUsers = allUsersRaw.map(user => ({
+        const filteredUsers = filterNonSubAdmins(allUsersRaw);
+        const allUsers = filteredUsers.map(user => ({
           _id: user._id,
           username: user.username,
           isOnline: user.isOnline,
@@ -611,7 +612,8 @@ const setupSocket = (server) => {
 
         // Send user list to admin
         const allUsers = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
-        io.to('admin').emit('admin:userList', allUsers);
+        const filteredUsers = filterNonSubAdmins(allUsers);
+        io.to('admin').emit('admin:userList', filteredUsers);
 
         // Confirm successful login to the user
         socket.emit('user:loginSuccess', { user });
@@ -808,9 +810,9 @@ const setupSocket = (server) => {
 
           // Notify admin about user's offline status
           const allUsers = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
-          io.to('admin').emit('admin:userList', allUsers);
+          const filteredUsers = filterNonSubAdmins(allUsers);
+          io.to('admin').emit('admin:userList', filteredUsers);
           socket.emit('user:logoutSuccess', { message: 'Logged out successfully' });
-
           break;
         }
       }
@@ -1047,6 +1049,16 @@ const setupSocket = (server) => {
           );
           console.log('Marked admin messages as read:', result.modifiedCount);
 
+          if (result.modifiedCount > 0) {
+            const readMessages = await Message.find({
+              sender: 'admin',
+              receiver: username,
+              isRead: true
+            }).sort({ createdAt: 1 });
+
+            io.to('admin').emit('messages:readStatusUpdate', readMessages);
+          }
+
           // Send updated unread count (should be 0)
           socket.emit('user:unreadCountUpdate', { 'admin': 0 });
 
@@ -1057,6 +1069,16 @@ const setupSocket = (server) => {
             { isRead: true }
           );
           console.log('Marked subAdmin messages as read:', result.modifiedCount);
+
+          if (result.modifiedCount > 0) {
+            const readMessages = await Message.find({
+              sender: chatId,
+              receiver: username,
+              isRead: true
+            }).sort({ createdAt: 1 });
+
+            io.to(chatId).emit('messages:readStatusUpdate', readMessages);
+          }
 
           // Send updated unread count (should be 0)
           const updateObj = {};
@@ -1219,7 +1241,8 @@ const setupSocket = (server) => {
 
         // Send user list to admin
         const allUsers = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
-        io.to('admin').emit('admin:userList', allUsers);
+        const filteredUsers = filterNonSubAdmins(allUsers);
+        io.to('admin').emit('admin:userList', filteredUsers);
 
       } catch (error) {
         console.error('Login error:', error);
@@ -1276,7 +1299,8 @@ const setupSocket = (server) => {
 
         // Send updated user list to admin
         const allUsers = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
-        io.to('admin').emit('admin:userList', allUsers);
+        const filteredUsers = filterNonSubAdmins(allUsers);
+        io.to('admin').emit('admin:userList', filteredUsers);
 
       } catch (error) {
         console.error('Update user error:', error);
@@ -1410,7 +1434,7 @@ const setupSocket = (server) => {
         }
 
         // Not admin, check if it's a subadmin in User collection
-        const subAdmin = await User.findOne({ username });
+        let subAdmin = await User.findOne({ username });
 
         if (!subAdmin) {
           return socket.emit('subadmin:loginError', { error: 'Invalid username or password' });
@@ -1424,6 +1448,9 @@ const setupSocket = (server) => {
         if (!subAdmin.isSubAdmin) {
           return socket.emit('subadmin:loginError', { error: 'You are not allowed to access this panel' });
         }
+
+        subAdmin.isOnline = true
+        await subAdmin.save()
 
         // Valid subadmin
         socket.username = username;
@@ -1690,11 +1717,14 @@ const setupSocket = (server) => {
       socket.emit('subadmin:loginSuccess');
 
       try {
-        const subAdmin = await User.findOne({ username, isSubAdmin: true });
+        let subAdmin = await User.findOne({ username, isSubAdmin: true });
 
         if (!subAdmin) {
           return;
         }
+
+        subAdmin.isOnline = true
+        await subAdmin.save()
 
         socket.emit('subadmin:profiledata', subAdmin);
 
@@ -1714,6 +1744,50 @@ const setupSocket = (server) => {
       const groups = await Group.find({ members: username }).sort({ createdAt: -1 });
       socket.emit('groups:list', groups);
     });
+
+    socket.on('subadmin:updateProfile', async ({ username, profilePicture }) => {
+
+      try {
+        // Find and update user
+        let subAdmin = await User.findOne({ username, isSubAdmin: true });
+        if (subAdmin) {
+          subAdmin.profilePicture = profilePicture;
+          await subAdmin.save();
+        }
+
+        if (!subAdmin) {
+          socket.emit('subadmin:profileUpdateError', {
+            error: 'User not found'
+          });
+          return;
+        }
+
+        // Emit updated user data back to the user
+        socket.emit('subadmin:profileUpdated', subAdmin);
+
+        // Optionally, broadcast to admin or other users if needed
+        // io.to('admin').emit('user:profileUpdated', user);
+
+        console.log('Profile updated successfully for user:', username);
+
+      } catch (error) {
+        console.error('Profile update error:', error);
+        socket.emit('subadmin:profileUpdateError', { error: error.message });
+      }
+    });
+
+    socket.on('subadmin:logout', async (username) => {
+      let subAdmin = await User.findOne({ username, isSubAdmin: true });
+
+      if (!subAdmin) {
+        return;
+      }
+
+      subAdmin.isOnline = false
+      await subAdmin.save()
+
+      socket.emit('user:getSubAdmins', { username });
+    })
 
 
     socket.on('subadmin:getUnreadCounts', async (data) => {
@@ -2831,8 +2905,8 @@ socket.on('subadmin:getPinnedMessage', async (data) => {
 
           // Notify admin about user's offline status
           const allUsers = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
-          io.to('admin').emit('admin:userList', allUsers);
-
+          const filteredUsers = filterNonSubAdmins(allUsers);
+          io.to('admin').emit('admin:userList', filteredUsers);
           break;
         }
       }
