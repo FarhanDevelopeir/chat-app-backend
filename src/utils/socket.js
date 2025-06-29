@@ -513,7 +513,8 @@ const setupSocket = (server) => {
 
         // Send user list to admin
         const allUsersRaw = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
-        const allUsers = allUsersRaw.map(user => ({
+        const filteredUsers = filterNonSubAdmins(allUsersRaw);
+        const allUsers = filteredUsers.map(user => ({
           _id: user._id,
           username: user.username,
           isOnline: user.isOnline,
@@ -617,7 +618,8 @@ const setupSocket = (server) => {
 
         // Send user list to admin
         const allUsers = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
-        io.to('admin').emit('admin:userList', allUsers);
+        const filteredUsers = filterNonSubAdmins(allUsers);
+        io.to('admin').emit('admin:userList', filteredUsers);
 
         // Confirm successful login to the user
         socket.emit('user:loginSuccess', { user });
@@ -815,9 +817,9 @@ const setupSocket = (server) => {
 
           // Notify admin about user's offline status
           const allUsers = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
-          io.to('admin').emit('admin:userList', allUsers);
+          const filteredUsers = filterNonSubAdmins(allUsers);
+          io.to('admin').emit('admin:userList', filteredUsers);
           socket.emit('user:logoutSuccess', { message: 'Logged out successfully' });
-
           break;
         }
       }
@@ -1454,7 +1456,8 @@ const setupSocket = (server) => {
 
         // Send user list to admin
         const allUsers = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
-        io.to('admin').emit('admin:userList', allUsers);
+        const filteredUsers = filterNonSubAdmins(allUsers);
+        io.to('admin').emit('admin:userList', filteredUsers);
 
       } catch (error) {
         console.error('Login error:', error);
@@ -1511,7 +1514,8 @@ const setupSocket = (server) => {
 
         // Send updated user list to admin
         const allUsers = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
-        io.to('admin').emit('admin:userList', allUsers);
+        const filteredUsers = filterNonSubAdmins(allUsers);
+        io.to('admin').emit('admin:userList', filteredUsers);
 
       } catch (error) {
         console.error('Update user error:', error);
@@ -2789,8 +2793,8 @@ const setupSocket = (server) => {
 
           // Notify admin about user's offline status
           const allUsers = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
-          io.to('admin').emit('admin:userList', allUsers);
-
+          const filteredUsers = filterNonSubAdmins(allUsers);
+          io.to('admin').emit('admin:userList', filteredUsers);
           break;
         }
       }
