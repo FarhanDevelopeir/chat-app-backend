@@ -1285,10 +1285,6 @@ const setupSocket = (server) => {
           userId: user._id
         });
 
-        // Send user list to admin
-        // const allUsers = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
-        // const filteredUsers = filterNonSubAdmins(allUsers);
-        // io.to('admin').emit('admin:userList', filteredUsers);
 
         broadcastUserListUpdate(io)
 
