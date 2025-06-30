@@ -5,7 +5,8 @@ const Message = require('../models/Message');
 const admin = require('../models/admin');
 const fetch = require('node-fetch');
 const { default: mongoose } = require('mongoose');
-const filterNonSubAdmins = require('./utils');
+const { filterNonSubAdmins, filterUsersForSubAdmin } = require('./utils');
+// const filterUsersForSubAdmin = require('./utils');
 
 
 require('dotenv').config();
@@ -36,6 +37,16 @@ const setupSocket = (server) => {
     socket.username = null;
 
     // ========== GROUP MANAGEMENT HANDLERS (NEW) ==========
+
+
+    const broadcastUserListUpdate = async (io) => {
+      try {
+        const users = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
+        io.to('admin').emit('admin:userList', filterNonSubAdmins(users));
+      } catch (error) {
+        console.error('Error broadcasting user list update:', error);
+      }
+    };
 
     // Create a new group
     socket.on('group:create', async (data) => {
@@ -506,20 +517,11 @@ const setupSocket = (server) => {
         socket.join(username);
 
         // Send user list to admin
-        const allUsersRaw = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
-        const filteredUsers = filterNonSubAdmins(allUsersRaw);
-        const allUsers = filteredUsers.map(user => ({
-          _id: user._id,
-          username: user.username,
-          isOnline: user.isOnline,
-          lastSeen: user.lastSeen,
-          ipAddress: user.ipAddress || 'Not recorded' // Fallback for missing IP
-        }));
+        // const allUsersRaw = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
+        // const filteredUsers = filterNonSubAdmins(allUsersRaw);
+        // io.to('admin').emit('admin:userList', filteredUsers);
 
-        io.to('admin').emit('admin:userList', allUsers);
-        console.log('allUsers', allUsers);
-
-        io.to('admin').emit('admin:userList', allUsers);
+        broadcastUserListUpdate(io)
 
         // Confirm successful login to the user
         socket.emit('user:loginSuccess', { user });
@@ -611,9 +613,11 @@ const setupSocket = (server) => {
         socket.join(username);
 
         // Send user list to admin
-        const allUsers = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
-        const filteredUsers = filterNonSubAdmins(allUsers);
-        io.to('admin').emit('admin:userList', filteredUsers);
+        // const allUsers = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
+        // const filteredUsers = filterNonSubAdmins(allUsers);
+        // io.to('admin').emit('admin:userList', filteredUsers);
+
+        broadcastUserListUpdate(io)
 
         // Confirm successful login to the user
         socket.emit('user:loginSuccess', { user });
@@ -809,9 +813,13 @@ const setupSocket = (server) => {
           activeUsers.delete(username);
 
           // Notify admin about user's offline status
-          const allUsers = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
-          const filteredUsers = filterNonSubAdmins(allUsers);
-          io.to('admin').emit('admin:userList', filteredUsers);
+          // const allUsers = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
+          // const filteredUsers = filterNonSubAdmins(allUsers);
+          // io.to('admin').emit('admin:userList', filteredUsers);
+
+
+          broadcastUserListUpdate(io)
+
           socket.emit('user:logoutSuccess', { message: 'Logged out successfully' });
           break;
         }
@@ -1024,6 +1032,7 @@ const setupSocket = (server) => {
         // Find all users who are subAdmins
         const subAdmins = await User.find({
           isSubAdmin: true,
+          assignedUsers: { $in: [username] },
           username: { $ne: username } // Exclude the requesting user if they are also a subAdmin
         }).select('username profilePicture isOnline');
 
@@ -1192,8 +1201,12 @@ const setupSocket = (server) => {
     // ========== ADMIN HANDLERS (NEW) ==========
 
 
-    socket.on('admin:createUser', async ({ username, password, isSubAdmin = false }) => {
+    socket.on('admin:createUser', async (data) => {
       try {
+
+
+        const { username, password, isSubAdmin, assignedUsers } = data;
+
         const isAdminSocket = Array.from(socket.rooms).includes('admin');
         if (!isAdminSocket) {
           console.log("username", username);
@@ -1202,6 +1215,15 @@ const setupSocket = (server) => {
           socket.emit('admin:userCreated', {
             success: false,
             message: 'Unauthorized. Only admin can create users.'
+          });
+          return;
+        }
+
+
+        if (isSubAdmin && (!assignedUsers || assignedUsers.length === 0)) {
+          socket.emit('admin:userCreated', {
+            success: false,
+            message: 'Sub admin must have at least one assigned user'
           });
           return;
         }
@@ -1216,16 +1238,40 @@ const setupSocket = (server) => {
           return;
         }
 
+        // Validate assigned users exist (if sub admin)
+        if (isSubAdmin && assignedUsers) {
+          const existingUsers = await User.find({
+            username: { $in: assignedUsers },
+            isSubAdmin: false
+          });
+
+          if (existingUsers.length !== assignedUsers.length) {
+            socket.emit('admin:userCreated', {
+              success: false,
+              message: 'Some assigned users do not exist or are sub admins'
+            });
+            return;
+          }
+        }
+
         if (!user) {
           user = new User({
             username,
             password,
             isOnline: false,
-            isSubAdmin
+            isSubAdmin,
+            assignedUsers: isSubAdmin ? assignedUsers : []
           });
         }
 
         await user.save();
+
+        // if (isSubAdmin && assignedUsers) {
+        //   await User.updateMany(
+        //     { username: { $in: assignedUsers } },
+        //     { assignedToSubAdmin: username }
+        //   );
+        // }
 
         // Send success response
         socket.emit('admin:userCreated', {
@@ -1240,9 +1286,11 @@ const setupSocket = (server) => {
         });
 
         // Send user list to admin
-        const allUsers = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
-        const filteredUsers = filterNonSubAdmins(allUsers);
-        io.to('admin').emit('admin:userList', filteredUsers);
+        // const allUsers = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
+        // const filteredUsers = filterNonSubAdmins(allUsers);
+        // io.to('admin').emit('admin:userList', filteredUsers);
+
+        broadcastUserListUpdate(io)
 
       } catch (error) {
         console.error('Login error:', error);
@@ -1298,9 +1346,11 @@ const setupSocket = (server) => {
         });
 
         // Send updated user list to admin
-        const allUsers = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
-        const filteredUsers = filterNonSubAdmins(allUsers);
-        io.to('admin').emit('admin:userList', filteredUsers);
+        // const allUsers = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
+        // const filteredUsers = filterNonSubAdmins(allUsers);
+        // io.to('admin').emit('admin:userList', filteredUsers);
+
+        broadcastUserListUpdate(io)
 
       } catch (error) {
         console.error('Update user error:', error);
@@ -1362,15 +1412,17 @@ const setupSocket = (server) => {
         console.error('Admin not found:', error);
       }
 
-      // Send user list to admin
-      User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin')
-        .then(users => {
-          const filteredUsers = filterNonSubAdmins(users);
-          socket.emit('admin:userList', filteredUsers);
-        })
-        .catch(error => {
-          console.error('Error fetching users:', error);
-        });
+      // // Send user list to admin
+      // User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin')
+      //   .then(users => {
+      //     const filteredUsers = filterNonSubAdmins(users);
+      //     socket.emit('admin:userList', filteredUsers);
+      //   })
+      //   .catch(error => {
+      //     console.error('Error fetching users:', error);
+      //   });
+
+      broadcastUserListUpdate(io)
 
 
 
@@ -1414,16 +1466,11 @@ const setupSocket = (server) => {
           broadcastAdminStatus();
           socket.emit('admin:profiledata', Admin);
 
-          // Send user list to admin
           // const users = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
-          // socket.emit('admin:userList', users);
+          // const filteredUsers = filterNonSubAdmins(users);
+          // socket.emit('admin:userList', filteredUsers);
 
-          const users = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
-          const filteredUsers = filterNonSubAdmins(users);
-
-          console.log('filteredUsers', filteredUsers)
-
-          socket.emit('admin:userList', filteredUsers);
+          broadcastUserListUpdate(io)
 
           // Send admin groups
           const Group = require('../models/group');
@@ -1458,9 +1505,9 @@ const setupSocket = (server) => {
         socket.emit('subadmin:loginSuccess');
         socket.emit('subadmin:profiledata', subAdmin);
 
-        // Send list of users excluding this subadmin
-        const users = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
-        const filteredUsers = filterNonSubAdmins(users);
+        // Send list of users to subadmin
+        const users = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin assignedUsers');
+        const filteredUsers = filterUsersForSubAdmin(users, username);
         socket.emit('subadmin:userList', filteredUsers);
 
         // Send groups the subadmin is part of
@@ -1730,9 +1777,8 @@ const setupSocket = (server) => {
         console.error('subadmin not found:', error);
       }
 
-      // Send user list to admin
-      const users = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
-      const filteredUsers = filterNonSubAdmins(users);
+      const users = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin assignedUsers');
+      const filteredUsers = filterUsersForSubAdmin(users, username);
       socket.emit('subadmin:userList', filteredUsers);
 
       // Send groups the subadmin is part of
@@ -2854,27 +2900,68 @@ const setupSocket = (server) => {
     });
 
     // Get pinned message for subadmin-user chat
-    socket.on('subadmin:getPinnedMessage', async (data) => {
+    socket.on('chat:getPinnedChats', async (data) => {
       try {
-        const { sender, receiver } = data;
+        const { userType, currentUsername } = data;
+        let currentUser;
 
-        const pinnedMessage = await Message.findOne({
-          $or: [
-            { sender: sender, receiver: receiver },
-            { sender: receiver, receiver: sender }
-          ],
-          isPinned: true,
-          groupId: null // Ensure it's not a group message
-        });
-
-        if (pinnedMessage) {
-          socket.emit('subadmin:messagePinned', { message: pinnedMessage });
+        // Get the appropriate user based on type
+        if (userType === 'admin') {
+          currentUser = await admin.findOne({ username: 'admin' }); // or however you identify admin
+        } else if (userType === 'subadmin') {
+          currentUser = await User.findOne({
+            username: currentUsername,
+            isSubAdmin: true
+          });
         }
 
+        if (currentUser) {
+          const pinnedChats = currentUser.getPinnedChats();
+          const eventPrefix = userType === 'admin' ? 'admin' : 'subadmin';
+          socket.emit(`${eventPrefix}:pinnedChats`, { pinnedChats });
+        }
       } catch (error) {
-        console.error('Error getting pinned subadmin message:', error);
+        console.error('Error getting pinned chats:', error);
       }
     });
+
+    socket.on('chat:togglePin', async (data) => {
+      try {
+        const { targetUsername, userType, currentUsername } = data;
+        let currentUser;
+
+        // Get the appropriate user based on type
+        if (userType === 'admin') {
+          currentUser = await admin.findOne({ username: 'admin' }); // or however you identify admin
+        } else if (userType === 'subadmin') {
+          currentUser = await User.findOne({
+            username: currentUsername,
+            isSubAdmin: true
+          });
+        }
+
+        if (!currentUser) {
+          socket.emit('error', { message: 'User not found' });
+          return;
+        }
+
+        const isPinned = currentUser.togglePinChat(targetUsername);
+        await currentUser.save();
+
+        // Emit to the specific admin/subadmin
+        const eventPrefix = userType === 'admin' ? 'admin' : 'subadmin';
+        socket.emit(`${eventPrefix}:chatPinToggled`, {
+          targetUsername,
+          isPinned,
+          pinnedChats: currentUser?.getPinnedChats()
+        });
+
+      } catch (error) {
+        console.error('Error toggling pin:', error);
+        socket.emit('error', { message: 'Failed to toggle pin' });
+      }
+    });
+
 
 
     // Handle disconnection
@@ -2900,9 +2987,13 @@ const setupSocket = (server) => {
           activeUsers.delete(username);
 
           // Notify admin about user's offline status
-          const allUsers = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
-          const filteredUsers = filterNonSubAdmins(allUsers);
-          io.to('admin').emit('admin:userList', filteredUsers);
+          // const allUsers = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
+          // const filteredUsers = filterNonSubAdmins(allUsers);
+          // io.to('admin').emit('admin:userList', filteredUsers);
+
+          broadcastUserListUpdate(io)
+
+
           break;
         }
       }
