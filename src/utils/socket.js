@@ -6,6 +6,7 @@ const admin = require('../models/admin');
 const fetch = require('node-fetch');
 const { default: mongoose } = require('mongoose');
 const { filterNonSubAdmins, filterUsersForSubAdmin } = require('./utils');
+const Announcement = require('../models/Announcement');
 // const filterUsersForSubAdmin = require('./utils');
 
 
@@ -1266,13 +1267,7 @@ const setupSocket = (server) => {
 
         await user.save();
 
-        // if (isSubAdmin && assignedUsers) {
-        //   await User.updateMany(
-        //     { username: { $in: assignedUsers } },
-        //     { assignedToSubAdmin: username }
-        //   );
-        // }
-
+       
         // Send success response
         socket.emit('admin:userCreated', {
           success: true,
@@ -2085,7 +2080,6 @@ const setupSocket = (server) => {
     });
 
 
-
     socket.on('messages:markRead', async ({ sender, receiver, chatType = null, isAdmin, isSubAdmin }) => {
       try {
         // const result = await Message.updateMany(
@@ -2308,310 +2302,7 @@ const setupSocket = (server) => {
       }
     });
     // close for realtime reading of messages
-
-    // When admin connects, join admin room for broadcast updates
-    socket.on('admin:login', (adminData) => {
-      socket.join('admin');
-      // ... rest of your admin login logic
-    });
-
-    // Optional: Get total unread count across all users
-    socket.on('admin:getTotalUnreadCount', async () => {
-      try {
-        const totalUnread = await Message.countDocuments({
-          receiver: 'admin',
-          isRead: false
-        });
-
-        socket.emit('admin:totalUnreadCount', totalUnread);
-      } catch (error) {
-        console.error('Error getting total unread count:', error);
-      }
-    });
-
-    // User typing indicators
-    socket.on('user:typing', ({ sender, receiver }) => {
-      io.to(receiver).emit('user:typing', { sender });
-    });
-
-    socket.on('user:stopTyping', ({ sender, receiver }) => {
-      io.to(receiver).emit('user:stopTyping', { sender });
-    });
-
-    socket.on('admin:logout', () => {
-      socket.leave('admin');
-      adminIsOnline = false;
-      broadcastAdminStatus();
-      console.log('Admin logged out:', adminIsOnline);
-    })
-
-    socket.on('user:logout', async () => {
-      // Find the disconnected user and update their status
-      for (const [username, data] of activeUsers.entries()) {
-        if (data.socketId === socket.id) {
-          await User.findByIdAndUpdate(data.userId, {
-            isOnline: false,
-            lastSeen: Date.now()
-          });
-
-          activeUsers.delete(username);
-
-          // Notify admin about user's offline status
-          const allUsers = await User.find({}, 'username isOnline lastSeen');
-          io.to('admin').emit('admin:userList', allUsers);
-          socket.emit('user:logoutSuccess', { message: 'Logged out successfully' });
-
-          break;
-        }
-      }
-    })
-
-    // show unread messages length
-    socket.on('user:getUnreadCounts', async (data) => {
-      try {
-        console.log('Getting unread counts for:', data.username);
-        const { username } = data;
-        const unreadCounts = {};
-
-        // Get admin chat unread count
-        const adminUnreadCount = await Message.countDocuments({
-          sender: 'admin',
-          receiver: username,
-          isRead: false
-        });
-        console.log('Admin unread count:', adminUnreadCount);
-
-        if (adminUnreadCount > 0) {
-          unreadCounts['admin'] = adminUnreadCount;
-        }
-
-        // Get group unread counts
-        const userGroups = await Group.find({ members: username });
-        for (const group of userGroups) {
-          const groupUnreadCount = await Message.countDocuments({
-            groupId: group._id,
-            sender: { $ne: username },
-            isRead: false
-          });
-          console.log(`Group ${group.name} unread count:`, groupUnreadCount);
-
-          if (groupUnreadCount > 0) {
-            unreadCounts[group._id.toString()] = groupUnreadCount;
-          }
-        }
-
-        console.log('Sending unread counts:', unreadCounts);
-        socket.emit('user:unreadCounts', unreadCounts);
-
-      } catch (error) {
-        console.error('Error getting unread counts:', error);
-      }
-    });
-
-    // Get latest messages for user
-    socket.on('user:getLatestMessages', async (data) => {
-      try {
-        console.log('Getting latest messages for:', data.username);
-        const { username } = data;
-        const latestMessages = {};
-
-        // Get latest admin message
-        const latestAdminMessage = await Message.findOne({
-          $or: [
-            { sender: 'admin', receiver: username },
-            { sender: username, receiver: 'admin' }
-          ]
-        }).sort({ createdAt: -1 });
-
-        if (latestAdminMessage) {
-          latestMessages['admin'] = {
-            content: latestAdminMessage.content,
-            sender: latestAdminMessage.sender,
-            createdAt: latestAdminMessage.createdAt
-          };
-        }
-
-        // Get latest group messages
-        const userGroups = await Group.find({ members: username });
-        for (const group of userGroups) {
-          const latestGroupMessage = await Message.findOne({
-            groupId: group._id
-          }).sort({ createdAt: -1 });
-
-          if (latestGroupMessage) {
-            latestMessages[group._id.toString()] = {
-              content: latestGroupMessage.content,
-              sender: latestGroupMessage.sender,
-              createdAt: latestGroupMessage.createdAt
-            };
-          }
-        }
-
-        console.log('Sending latest messages:', latestMessages);
-        socket.emit('user:latestMessages', latestMessages);
-
-      } catch (error) {
-        console.error('Error getting latest messages:', error);
-      }
-    });
-
-    // Get latest messages for user
-    socket.on('admin:getLatestMessages', async (data) => {
-      try {
-        console.log('Getting latest messages for:', data.username);
-        const { username } = data;
-        const latestMessages = {};
-
-        if (username === 'admin') {
-          // If admin is requesting, get latest messages with all users
-          console.log('Admin requesting messages - getting all user conversations');
-
-          // Get all unique users who have exchanged messages with admin
-          const adminMessages = await Message.find({
-            $or: [
-              { sender: 'admin' },
-              { receiver: 'admin' }
-            ]
-          }).select('sender receiver');
-
-          // Extract unique usernames (excluding admin)
-          const uniqueUsers = new Set();
-          adminMessages.forEach(msg => {
-            if (msg.sender !== 'admin') uniqueUsers.add(msg.sender);
-            if (msg.receiver !== 'admin') uniqueUsers.add(msg.receiver);
-          });
-
-          // Get latest message for each user
-          for (const user of uniqueUsers) {
-            const latestUserMessage = await Message.findOne({
-              $or: [
-                { sender: 'admin', receiver: user },
-                { sender: user, receiver: 'admin' }
-              ]
-            }).sort({ createdAt: -1 });
-
-            if (latestUserMessage) {
-              latestMessages[user] = {
-                content: latestUserMessage.content,
-                sender: latestUserMessage.sender,
-                createdAt: latestUserMessage.createdAt
-              };
-            }
-          }
-
-          // Also get latest group messages for admin
-          const adminGroups = await Group.find({ members: 'admin' });
-          for (const group of adminGroups) {
-            const latestGroupMessage = await Message.findOne({
-              groupId: group._id
-            }).sort({ createdAt: -1 });
-
-            if (latestGroupMessage) {
-              latestMessages[group._id.toString()] = {
-                content: latestGroupMessage.content,
-                sender: latestGroupMessage.sender,
-                createdAt: latestGroupMessage.createdAt,
-                groupName: group.name // Optional: include group name for admin
-              };
-            }
-          }
-
-        }
-
-
-        console.log('Sending latest messages:', latestMessages);
-        socket.emit('admin:latestMessages', latestMessages);
-
-      } catch (error) {
-        console.error('Error getting latest messages:', error);
-      }
-    });
-
-
-    // Mark chat as read - NEW HANDLER
-    socket.on('user:markChatAsRead', async (data) => {
-      try {
-        const { username, chatId, chatType } = data;
-        console.log('Marking chat as read:', { username, chatId, chatType });
-
-        if (chatType === 'admin') {
-          // Mark admin messages as read
-          const result = await Message.updateMany(
-            { sender: 'admin', receiver: username, isRead: false },
-            { isRead: true }
-          );
-          console.log('Marked admin messages as read:', result.modifiedCount);
-
-          // Send updated unread count (should be 0)
-          socket.emit('user:unreadCountUpdate', { 'admin': 0 });
-
-        } else if (chatType === 'group') {
-          // Mark group messages as read
-          const result = await Message.updateMany(
-            { groupId: chatId, sender: { $ne: username }, isRead: false },
-            { isRead: true }
-          );
-          console.log('Marked group messages as read:', result.modifiedCount);
-
-          // Send updated unread count (should be 0)
-          const updateObj = {};
-          updateObj[chatId] = 0;
-          socket.emit('user:unreadCountUpdate', updateObj);
-        }
-
-      } catch (error) {
-        console.error('Error marking chat as read:', error);
-      }
-    });
-
-
-
-    // Update unread count
-    socket.on('user:updateUnreadCount', async (data) => {
-      try {
-        const { username, chatId, increment, reset } = data;
-
-        if (reset) {
-          // Mark messages as read
-          if (chatId === 'admin') {
-            await Message.updateMany(
-              { sender: 'admin', receiver: username, isRead: false },
-              { isRead: true }
-            );
-          } else {
-            await Message.updateMany(
-              { groupId: chatId, sender: { $ne: username }, isRead: false },
-              { isRead: true }
-            );
-          }
-        }
-
-        // Get updated unread count
-        let unreadCount = 0;
-        if (chatId === 'admin') {
-          unreadCount = await Message.countDocuments({
-            sender: 'admin',
-            receiver: username,
-            isRead: false
-          });
-        } else {
-          unreadCount = await Message.countDocuments({
-            groupId: chatId,
-            sender: { $ne: username },
-            isRead: false
-          });
-        }
-
-        socket.emit('user:unreadCountUpdate', { [chatId]: unreadCount });
-      } catch (error) {
-        console.error('Error updating unread count:', error);
-      }
-    });
-
-    // close unread messages length
-
-
-    // Add these socket event handlers in your backend
+    
 
     // Pin message for direct chat
     socket.on('message:pin', async (data) => {
@@ -2957,6 +2648,108 @@ const setupSocket = (server) => {
         socket.emit('error', { message: 'Failed to toggle pin' });
       }
     });
+
+
+
+    // Add these socket handlers to your backend socket file
+
+// Create Announcement
+socket.on('announcement:create', async (data) => {
+  try {
+    const { text, createdBy, userType } = data;
+
+    // Verify admin/subadmin permission
+    const isAdminSocket = Array.from(socket.rooms).includes('admin');
+    const user = await User.findOne({ username: createdBy });
+    
+    if (!isAdminSocket && !user?.isSubAdmin) {
+      socket.emit('error', { message: 'Unauthorized' });
+      return;
+    }
+
+    // Create announcement in database
+    const announcement = new Announcement({
+      text,
+      createdBy,
+      createdAt: new Date(),
+      isActive: true
+    });
+
+    await announcement.save();
+
+    // Broadcast to all users
+    io.emit('user:newAnnouncement', announcement);
+    
+    // Send back to creator
+    const eventName = user?.isSubAdmin ? 'announcement:created' : 'announcement:created';
+    socket.emit(eventName, announcement);
+
+  } catch (error) {
+    console.error('Error creating announcement:', error);
+    socket.emit('error', { message: 'Failed to create announcement' });
+  }
+});
+
+// Fetch Announcements for Admin/SubAdmin
+socket.on('announcements:fetch', async (data) => {
+  try {
+    const { userType } = data;
+
+    const announcements = await Announcement.find({ isActive: true })
+      .sort({ createdAt: -1 })
+      .limit(10);
+
+    socket.emit('announcements:list', announcements);
+
+  } catch (error) {
+    console.error('Error fetching announcements:', error);
+  }
+});
+
+// Delete Announcement
+socket.on('announcement:delete', async (data) => {
+  try {
+    const { announcementId, userType } = data;
+
+    // Verify admin/subadmin permission
+    const isAdminSocket = Array.from(socket.rooms).includes('admin');
+    const currentUser = await User.findOne({ username: socket.username });
+    
+    if (!isAdminSocket && !currentUser?.isSubAdmin) {
+      socket.emit('error', { message: 'Unauthorized' });
+      return;
+    }
+
+    // Delete announcement
+    await Announcement.findByIdAndUpdate(announcementId, { isActive: false });
+
+    // Broadcast deletion to all users
+    io.emit('user:announcementDeleted', announcementId);
+    
+    // Confirm deletion to admin/subadmin
+    socket.emit('announcement:deleted', announcementId);
+
+  } catch (error) {
+    console.error('Error deleting announcement:', error);
+    socket.emit('error', { message: 'Failed to delete announcement' });
+  }
+});
+
+// Get Announcements for Regular Users
+socket.on('user:getAnnouncements', async (data) => {
+  try {
+    const { username } = data;
+
+    const announcements = await Announcement.find({ isActive: true })
+      .sort({ createdAt: -1 })
+      .limit(5);
+
+    socket.emit('user:announcements', announcements);
+
+  } catch (error) {
+    console.error('Error getting user announcements:', error);
+  }
+});
 
 
 
