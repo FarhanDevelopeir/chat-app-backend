@@ -1545,25 +1545,82 @@ const setupSocket = (server) => {
         const limit = 12;
         const skip = (page - 1) * limit;
 
-        // Get total count for pagination
-        const totalMessages = await Message.countDocuments({
-          $or: [
-            { sender: username, receiver: "admin" },
-            { sender: "admin", receiver: username }
-          ]
-        });
 
-        // Get paginated messages
-        const messages = await Message.find({
-          $or: [
-            { sender: username, receiver: "admin" },
-            { sender: "admin", receiver: username }
-          ]
-        })
-          .sort({ createdAt: -1 })
-          .skip(skip)
-          .limit(limit)
-          .then(msgs => msgs.reverse());
+        let query, totalMessages, messages;
+
+        if (username === 'broadcast') {
+
+          // Count total broadcast messages from current user role
+          const uniqueBroadcastMessages = await Message.aggregate([
+            {
+              $match: {
+                sender: 'admin',
+                isBroadcast: true
+              }
+            },
+            {
+              $addFields: {
+                createdAtTruncated: {
+                  $dateTrunc: {
+                    date: "$createdAt",
+                    unit: "second"
+                  }
+                }
+              }
+            },
+            {
+              $group: {
+                _id: {
+                  content: "$content",
+                  createdAt: "$createdAtTruncated"
+                },
+                doc: { $first: "$$ROOT" }
+              }
+            },
+            {
+              $replaceRoot: {
+                newRoot: "$doc"
+              }
+            },
+            {
+              $sort: {
+                createdAt: -1
+              }
+            }
+          ]);
+
+
+
+          // Count total unique broadcast messages
+          totalMessages = uniqueBroadcastMessages.length;
+
+          // Get paginated broadcast messages from current user role
+          messages = uniqueBroadcastMessages
+            .slice(skip, skip + limit)
+            .reverse();
+
+        } else {
+          // Regular chat logic (existing code)
+          // Get total count for pagination
+          totalMessages = await Message.countDocuments({
+            $or: [
+              { sender: username, receiver: "admin" },
+              { sender: "admin", receiver: username }
+            ]
+          });
+
+          // Get paginated messages
+          messages = await Message.find({
+            $or: [
+              { sender: username, receiver: "admin" },
+              { sender: "admin", receiver: username }
+            ]
+          })
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit)
+            .then(msgs => msgs.reverse());
+        }
 
         const hasMore = totalMessages > (page * limit);
 
@@ -1574,23 +1631,23 @@ const setupSocket = (server) => {
           total: totalMessages
         });
 
-        // Mark messages from this user as read
-        const updatedMessages = await Message.updateMany(
-          { sender: username, receiver: 'admin', isRead: false },
-          { isRead: true }
-        );
+        if (username !== 'broadcast') {
+          // Mark messages from this user as read
+          const updatedMessages = await Message.updateMany(
+            { sender: username, receiver: 'admin', isRead: false },
+            { isRead: true }
+          );
 
-        // If messages were marked as read, notify the sender
-        if (updatedMessages.modifiedCount > 0) {
-          const readMessages = await Message.find({
-            sender: username,
-            receiver: 'admin',
-            isRead: true
-          }).sort({ createdAt: 1 });
+          if (updatedMessages.modifiedCount > 0) {
+            const readMessages = await Message.find({
+              sender: username,
+              receiver: 'admin',
+              isRead: true
+            }).sort({ createdAt: 1 });
 
-          io.to(username).emit('messages:readStatusUpdate', readMessages);
+            io.to(username).emit('messages:readStatusUpdate', readMessages);
+          }
         }
-
       } catch (error) {
         console.error('Error fetching chat history:', error);
       }
@@ -1860,25 +1917,81 @@ const setupSocket = (server) => {
         const limit = 12;
         const skip = (page - 1) * limit;
 
-        // Get total count for pagination
-        const totalMessages = await Message.countDocuments({
-          $or: [
-            { sender: sender, receiver: receiver },
-            { sender: receiver, receiver: sender }
-          ]
-        });
+        let query, totalMessages, messages;
 
-        // Get paginated messages
-        const messages = await Message.find({
-          $or: [
-            { sender: sender, receiver: receiver },
-            { sender: receiver, receiver: sender }
-          ]
-        })
-          .sort({ createdAt: -1 })
-          .skip(skip)
-          .limit(limit)
-          .then(msgs => msgs.reverse());
+
+        if (receiver === 'broadcast') {
+
+          // Count total broadcast messages from current user role
+          const uniqueBroadcastMessages = await Message.aggregate([
+            {
+              $match: {
+                sender: sender,
+                isBroadcast: true
+              }
+            },
+            {
+              $addFields: {
+                createdAtTruncated: {
+                  $dateTrunc: {
+                    date: "$createdAt",
+                    unit: "second"
+                  }
+                }
+              }
+            },
+            {
+              $group: {
+                _id: {
+                  content: "$content",
+                  createdAt: "$createdAtTruncated"
+                },
+                doc: { $first: "$$ROOT" }
+              }
+            },
+            {
+              $replaceRoot: {
+                newRoot: "$doc"
+              }
+            },
+            {
+              $sort: {
+                createdAt: -1
+              }
+            }
+          ]);
+
+          // Count total unique broadcast messages
+          totalMessages = uniqueBroadcastMessages.length;
+
+          // Get paginated broadcast messages from current user role
+          messages = uniqueBroadcastMessages
+            .slice(skip, skip + limit)
+            .reverse();
+
+        } else {
+
+          // Get total count for pagination
+          totalMessages = await Message.countDocuments({
+            $or: [
+              { sender: sender, receiver: receiver },
+              { sender: receiver, receiver: sender }
+            ]
+          });
+
+          // Get paginated messages
+          messages = await Message.find({
+            $or: [
+              { sender: sender, receiver: receiver },
+              { sender: receiver, receiver: sender }
+            ]
+          })
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit)
+            .then(msgs => msgs.reverse());
+
+        }
 
         const hasMore = totalMessages > (page * limit);
 
@@ -1889,23 +2002,25 @@ const setupSocket = (server) => {
           total: totalMessages
         });
 
-        // Mark messages from this user as read
-        const updatedMessages = await Message.updateMany(
-          { sender: sender, receiver: receiver, isRead: false },
-          { isRead: true }
-        );
+        if (receiver !== 'broadcast') {
 
-        // If messages were marked as read, notify the sender
-        if (updatedMessages.modifiedCount > 0) {
-          const readMessages = await Message.find({
-            sender: sender,
-            receiver: receiver,
-            isRead: true
-          }).sort({ createdAt: 1 });
+          // Mark messages from this user as read
+          const updatedMessages = await Message.updateMany(
+            { sender: sender, receiver: receiver, isRead: false },
+            { isRead: true }
+          );
 
-          io.to(receiver).emit('messages:readStatusUpdate', readMessages);
+          // If messages were marked as read, notify the sender
+          if (updatedMessages.modifiedCount > 0) {
+            const readMessages = await Message.find({
+              sender: sender,
+              receiver: receiver,
+              isRead: true
+            }).sort({ createdAt: 1 });
+
+            io.to(receiver).emit('messages:readStatusUpdate', readMessages);
+          }
         }
-
       } catch (error) {
         console.error('Error fetching chat history:', error);
       }
@@ -2646,6 +2761,120 @@ const setupSocket = (server) => {
       } catch (error) {
         console.error('Error toggling pin:', error);
         socket.emit('error', { message: 'Failed to toggle pin' });
+      }
+    });
+
+    socket.on('message:broadcast', async (messageData) => {
+      try {
+        const { sender, content, replyTo, file, audio } = messageData;
+
+        // Get all regular users (exclude admin and subadmins)
+
+
+        let targetUsers = [];
+
+        if (sender === 'admin') {
+          // Admin: get all regular users (non-subadmins)
+          targetUsers = await User.find({ isSubAdmin: false }).select('username');
+        } else {
+          const senderUser = await User.findOne({ username: sender, isSubAdmin: true });
+
+          if (!senderUser) {
+            throw new Error('Sender not found');
+          }
+          // SubAdmin: send to assigned users
+          targetUsers = await User.find({
+            username: { $in: senderUser.assignedUsers },
+            isSubAdmin: false
+          }).select('username');
+        }
+
+        // Create and save a message for each user
+        const broadcastMessages = [];
+
+        for (const user of targetUsers) {
+          const newMessage = new Message({
+            sender,
+            receiver: user.username,
+            content,
+            isRead: false,
+            isBroadcast: true, // NEW: Add broadcast flag
+            replyTo: replyTo || undefined,
+            file: file || undefined,
+            audio: audio || undefined,
+          });
+
+          const savedMessage = await newMessage.save();
+          broadcastMessages.push(savedMessage);
+
+          // Send to each user
+          io.to(user.username).emit('message:receive', savedMessage);
+          // socket.emit('message:sent', savedMessage);
+
+          // Update unread count for each user
+          const userUnreadCount = await Message.countDocuments({
+            sender: sender,
+            receiver: user.username,
+            isRead: false
+          });
+
+          if (sender === 'admin') {
+            io.to(user.username).emit('user:unreadCountUpdate', {
+              'admin': userUnreadCount
+            });
+          } else {
+            // SubAdmin broadcast
+            io.to(user.username).emit('user:unreadCountUpdate', {
+              [sender]: userUnreadCount
+            });
+          }
+
+          // Update latest message
+          const messageForBroadcast = {
+            content: savedMessage.content,
+            sender: savedMessage.sender,
+            createdAt: savedMessage.createdAt,
+            isBroadcast: true
+          };
+
+          if (sender === 'admin') {
+            io.to(user.username).emit('user:latestMessageUpdate', {
+              'admin': messageForBroadcast
+            });
+          } else {
+            // SubAdmin broadcast
+            io.to(user.username).emit('user:latestMessageUpdate', {
+              [sender]: messageForBroadcast
+            });
+          }
+        }
+
+        // Send confirmation back to sender
+        socket.emit('message:broadcastSent', {
+          success: true,
+          messageCount: broadcastMessages.length,
+          content: content
+        });
+
+
+
+        // Update admin/subadmin's latest messages for each user
+        for (const user of targetUsers) {
+          const messageForBroadcast = {
+            content: content,
+            sender: sender,
+            createdAt: new Date(),
+            isBroadcast: true
+          };
+
+          io.to(sender).emit('user:latestMessageUpdate', {
+            [user.username]: messageForBroadcast
+          });
+        }
+
+      } catch (error) {
+        console.error('Error sending broadcast message:', error);
+        socket.emit('message:error', { error: error.message });
       }
     });
 

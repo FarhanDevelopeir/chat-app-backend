@@ -27,6 +27,10 @@ const MessageSchema = new mongoose.Schema({
     of: [String], // Array of usernames who reacted with each emoji
     default: new Map()
   },
+  isBroadcast: {
+    type: Boolean,
+    default: false
+  },
   // In your Message model
   replyTo: {
     messageId: { type: mongoose.Schema.Types.ObjectId, ref: 'Message' },
