@@ -34,6 +34,9 @@ const setupSocket = (server) => {
   io.on('connection', (socket) => {
     console.log('A user connected:', socket.id);
 
+    console.log("Full Socket Object:", socket);
+    
+
     // Store username on socket for group functionality
     socket.username = null;
 
@@ -3023,6 +3026,9 @@ const setupSocket = (server) => {
       }
     });
   });
+
+  console.log("activeUsers", activeUsers);
+  
 
   return io;
 };
