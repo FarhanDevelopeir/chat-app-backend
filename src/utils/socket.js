@@ -34,7 +34,7 @@ const setupSocket = (server) => {
   io.on('connection', (socket) => {
     console.log('A user connected:', socket.id);
 
-    console.log("Full Socket Object:", socket);
+    // console.log("Full Socket Object:", socket);
     
 
     // Store username on socket for group functionality
@@ -576,6 +576,7 @@ const setupSocket = (server) => {
 
     socket.on('user:islogin', async ({ username, deviceId }) => {
       console.log('User islogin attempt:', username, deviceId);
+      console.log("activeUsers", activeUsers);
 
       try {
 
@@ -3027,7 +3028,7 @@ const setupSocket = (server) => {
     });
   });
 
-  console.log("activeUsers", activeUsers);
+
   
 
   return io;
