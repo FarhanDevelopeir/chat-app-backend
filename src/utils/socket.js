@@ -1267,7 +1267,7 @@ const setupSocket = (server) => {
 
         await user.save();
 
-       
+
         // Send success response
         socket.emit('admin:userCreated', {
           success: true,
@@ -1309,8 +1309,14 @@ const setupSocket = (server) => {
 
         console.log('Update user attempt:', userID, username, password);
 
-        // Find the user by original username
+        // Find the user by original UserID
         let user = await User.findOne({ _id: userID });
+
+        // **NEW: Only notify the specific user to reload their page**
+        io.emit('user:forceReload', {
+          targetUsername: username,
+          reason: 'Password updated by admin'
+        });
 
         if (!user) {
           socket.emit('admin:userUpdated', {
@@ -2417,7 +2423,7 @@ const setupSocket = (server) => {
       }
     });
     // close for realtime reading of messages
-    
+
 
     // Pin message for direct chat
     socket.on('message:pin', async (data) => {
@@ -2882,103 +2888,103 @@ const setupSocket = (server) => {
 
     // Add these socket handlers to your backend socket file
 
-// Create Announcement
-socket.on('announcement:create', async (data) => {
-  try {
-    const { text, createdBy, userType } = data;
+    // Create Announcement
+    socket.on('announcement:create', async (data) => {
+      try {
+        const { text, createdBy, userType } = data;
 
-    // Verify admin/subadmin permission
-    const isAdminSocket = Array.from(socket.rooms).includes('admin');
-    const user = await User.findOne({ username: createdBy });
-    
-    if (!isAdminSocket && !user?.isSubAdmin) {
-      socket.emit('error', { message: 'Unauthorized' });
-      return;
-    }
+        // Verify admin/subadmin permission
+        const isAdminSocket = Array.from(socket.rooms).includes('admin');
+        const user = await User.findOne({ username: createdBy });
 
-    // Create announcement in database
-    const announcement = new Announcement({
-      text,
-      createdBy,
-      createdAt: new Date(),
-      isActive: true
+        if (!isAdminSocket && !user?.isSubAdmin) {
+          socket.emit('error', { message: 'Unauthorized' });
+          return;
+        }
+
+        // Create announcement in database
+        const announcement = new Announcement({
+          text,
+          createdBy,
+          createdAt: new Date(),
+          isActive: true
+        });
+
+        await announcement.save();
+
+        // Broadcast to all users
+        io.emit('user:newAnnouncement', announcement);
+
+        // Send back to creator
+        const eventName = user?.isSubAdmin ? 'announcement:created' : 'announcement:created';
+        socket.emit(eventName, announcement);
+
+      } catch (error) {
+        console.error('Error creating announcement:', error);
+        socket.emit('error', { message: 'Failed to create announcement' });
+      }
     });
 
-    await announcement.save();
+    // Fetch Announcements for Admin/SubAdmin
+    socket.on('announcements:fetch', async (data) => {
+      try {
+        const { userType } = data;
 
-    // Broadcast to all users
-    io.emit('user:newAnnouncement', announcement);
-    
-    // Send back to creator
-    const eventName = user?.isSubAdmin ? 'announcement:created' : 'announcement:created';
-    socket.emit(eventName, announcement);
+        const announcements = await Announcement.find({ isActive: true })
+          .sort({ createdAt: -1 })
+          .limit(10);
 
-  } catch (error) {
-    console.error('Error creating announcement:', error);
-    socket.emit('error', { message: 'Failed to create announcement' });
-  }
-});
+        socket.emit('announcements:list', announcements);
 
-// Fetch Announcements for Admin/SubAdmin
-socket.on('announcements:fetch', async (data) => {
-  try {
-    const { userType } = data;
+      } catch (error) {
+        console.error('Error fetching announcements:', error);
+      }
+    });
 
-    const announcements = await Announcement.find({ isActive: true })
-      .sort({ createdAt: -1 })
-      .limit(10);
+    // Delete Announcement
+    socket.on('announcement:delete', async (data) => {
+      try {
+        const { announcementId, userType } = data;
 
-    socket.emit('announcements:list', announcements);
+        // Verify admin/subadmin permission
+        const isAdminSocket = Array.from(socket.rooms).includes('admin');
+        const currentUser = await User.findOne({ username: socket.username });
 
-  } catch (error) {
-    console.error('Error fetching announcements:', error);
-  }
-});
+        if (!isAdminSocket && !currentUser?.isSubAdmin) {
+          socket.emit('error', { message: 'Unauthorized' });
+          return;
+        }
 
-// Delete Announcement
-socket.on('announcement:delete', async (data) => {
-  try {
-    const { announcementId, userType } = data;
+        // Delete announcement
+        await Announcement.findByIdAndUpdate(announcementId, { isActive: false });
 
-    // Verify admin/subadmin permission
-    const isAdminSocket = Array.from(socket.rooms).includes('admin');
-    const currentUser = await User.findOne({ username: socket.username });
-    
-    if (!isAdminSocket && !currentUser?.isSubAdmin) {
-      socket.emit('error', { message: 'Unauthorized' });
-      return;
-    }
+        // Broadcast deletion to all users
+        io.emit('user:announcementDeleted', announcementId);
 
-    // Delete announcement
-    await Announcement.findByIdAndUpdate(announcementId, { isActive: false });
+        // Confirm deletion to admin/subadmin
+        socket.emit('announcement:deleted', announcementId);
 
-    // Broadcast deletion to all users
-    io.emit('user:announcementDeleted', announcementId);
-    
-    // Confirm deletion to admin/subadmin
-    socket.emit('announcement:deleted', announcementId);
+      } catch (error) {
+        console.error('Error deleting announcement:', error);
+        socket.emit('error', { message: 'Failed to delete announcement' });
+      }
+    });
 
-  } catch (error) {
-    console.error('Error deleting announcement:', error);
-    socket.emit('error', { message: 'Failed to delete announcement' });
-  }
-});
+    // Get Announcements for Regular Users
+    socket.on('user:getAnnouncements', async (data) => {
+      try {
+        const { username } = data;
 
-// Get Announcements for Regular Users
-socket.on('user:getAnnouncements', async (data) => {
-  try {
-    const { username } = data;
+        const announcements = await Announcement.find({ isActive: true })
+          .sort({ createdAt: -1 })
+          .limit(5);
 
-    const announcements = await Announcement.find({ isActive: true })
-      .sort({ createdAt: -1 })
-      .limit(5);
+        socket.emit('user:announcements', announcements);
 
-    socket.emit('user:announcements', announcements);
-
-  } catch (error) {
-    console.error('Error getting user announcements:', error);
-  }
-});
+      } catch (error) {
+        console.error('Error getting user announcements:', error);
+      }
+    });
 
 
 
