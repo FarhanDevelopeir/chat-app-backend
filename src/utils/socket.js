@@ -483,7 +483,7 @@ const setupSocket = (server) => {
         let user = await User.findOne({ username, password });
 
         // If user doesn't exist
-        if (!user) {
+        if (user== null) {
           socket.emit('user:loginError', {
             error: 'Invalid username or password'
           });
@@ -586,7 +586,7 @@ const setupSocket = (server) => {
         let user = await User.findOne({ username, deviceId });
 
         // If user doesn't exist
-        if (!user) {
+        if (user == null) {
           socket.emit('user:loginError', {
             error: 'Invalid username or password'
           });
@@ -1391,6 +1391,91 @@ const setupSocket = (server) => {
         socket.emit('admin:profileUpdateError', { error: error.message });
       }
     });
+
+    // Add this new socket event handler to your server code
+socket.on('admin:deleteUser', async ({ userID, username }) => {
+    try {
+        const isAdminSocket = Array.from(socket.rooms).includes('admin');
+        if (!isAdminSocket) {
+            socket.emit('admin:userDeleted', {
+                success: false,
+                message: 'Unauthorized. Only admin can delete users.'
+            });
+            return;
+        }
+
+        console.log('Delete user attempt:', userID, username);
+
+        // Find the user by ID
+        const user = await User.findOne({ _id: userID });
+
+        if (!user) {
+            socket.emit('admin:userDeleted', {
+                success: false,
+                message: 'User not found'
+            });
+            return;
+        }
+
+        // Check if user is currently online and disconnect them
+        // if (user.isOnline) {
+        //     // Find the user's socket and disconnect them
+        //     const userSocketEntry = Array.from(activeUsers.entries()).find(
+        //         ([_, userData]) => userData.userId.toString() === userID
+        //     );
+            
+        //     if (userSocketEntry) {
+        //         const [userUsername, userData] = userSocketEntry;
+        //         const userSocket = io.sockets.sockets.get(userData.socketId);
+                
+        //         if (userSocket) {
+        //             // Notify user before disconnecting
+        //             userSocket.emit('user:accountDeleted', {
+        //                 message: 'Your account has been deleted by an administrator'
+        //             });
+                    
+        //             // Disconnect user
+        //             userSocket.disconnect();
+        //         }
+                
+        //         // Remove from active users
+        //         activeUsers.delete(userUsername);
+        //     }
+        // }
+
+        // If user is a sub admin, we might want to handle their assigned users
+        if (user.isSubAdmin && user.assignedUsers && user.assignedUsers.length > 0) {
+            // Optional: You could reassign users or handle this case as needed
+            console.log(`Deleting sub admin with ${user.assignedUsers.length} assigned users`);
+        }
+
+        // Delete the user from database
+        await User.findByIdAndDelete(userID);
+
+
+        // **NEW: Only notify the specific user to reload their page**
+        io.emit('user:forceReload', {
+          targetUsername: username,
+          reason: 'Password updated by admin'
+        });
+
+        // Send success response
+        socket.emit('admin:userDeleted', {
+            success: true,
+            message: 'User deleted successfully'
+        });
+
+        // Broadcast updated user list to admin
+        broadcastUserListUpdate(io);
+
+    } catch (error) {
+        console.error('Delete user error:', error);
+        socket.emit('admin:userDeleted', {
+            success: false,
+            message: error.message || 'Failed to delete user'
+        });
+    }
+});
 
     // Admin authentication
     socket.on('admin:login', async () => {
