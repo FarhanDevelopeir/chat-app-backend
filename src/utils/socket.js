@@ -1297,9 +1297,9 @@ const setupSocket = (server) => {
       }
     });
 
-    socket.on('admin:updateUser', async ({ userID, username, password }) => {
+    socket.on('admin:updateUser', async ({ userID, username, password, isSubAdmin, assignedUsers }) => {
 
-      console.log('Update user attempt:', userID, username, password);
+      console.log('Update user attempt:', userID, username, password, isSubAdmin, assignedUsers);
 
       try {
         const isAdminSocket = Array.from(socket.rooms).includes('admin');
@@ -1311,16 +1311,17 @@ const setupSocket = (server) => {
           return;
         }
 
-        console.log('Update user attempt:', userID, username, password);
+        // Validate sub admin requirements
+        if (isSubAdmin && (!assignedUsers || assignedUsers.length === 0)) {
+          socket.emit('admin:userUpdated', {
+            success: false,
+            message: 'Sub admin must have at least one assigned user'
+          });
+          return;
+        }
 
         // Find the user by original UserID
         let user = await User.findOne({ _id: userID });
-
-        // **NEW: Only notify the specific user to reload their page**
-        io.emit('user:forceReload', {
-          targetUsername: username,
-          reason: 'Password updated by admin'
-        });
 
         if (!user) {
           socket.emit('admin:userUpdated', {
@@ -1330,12 +1331,40 @@ const setupSocket = (server) => {
           return;
         }
 
+        // Validate assigned users exist (if sub admin)
+        if (isSubAdmin && assignedUsers) {
+          const existingUsers = await User.find({
+            username: { $in: assignedUsers },
+            isSubAdmin: false
+          });
+
+          if (existingUsers.length !== assignedUsers.length) {
+            socket.emit('admin:userUpdated', {
+              success: false,
+              message: 'Some assigned users do not exist or are sub admins'
+            });
+            return;
+          }
+        }
+
+        // **NEW: Only notify the specific user to reload their page**
+        io.emit('user:forceReload', {
+          targetUsername: username,
+          reason: 'Profile updated by admin'
+        });
 
         // Update user fields
         user.username = username;
-        user.isPasswordChanged = true
+        user.isPasswordChanged = true;
+
         if (password && password.trim()) {
           user.password = password;
+        }
+
+        // Update sub admin status and assigned users
+        if (typeof isSubAdmin !== 'undefined') {
+          user.isSubAdmin = isSubAdmin;
+          user.assignedUsers = isSubAdmin ? (assignedUsers || []) : [];
         }
 
         await user.save();
@@ -1346,12 +1375,8 @@ const setupSocket = (server) => {
           message: 'User updated successfully'
         });
 
-        // Send updated user list to admin
-        // const allUsers = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
-        // const filteredUsers = filterNonSubAdmins(allUsers);
-        // io.to('admin').emit('admin:userList', filteredUsers);
-
-        broadcastUserListUpdate(io)
+        // Broadcast updated user list
+        broadcastUserListUpdate(io);
 
       } catch (error) {
         console.error('Update user error:', error);
@@ -2033,6 +2058,22 @@ const setupSocket = (server) => {
         }
       } catch (error) {
         console.error('Error fetching chat history:', error);
+      }
+    });
+
+    socket.on('admin:getSubAdmins', async () => {
+      try {
+        // Find all subadmins
+        const subAdmins = await User.find(
+          { isSubAdmin: true },
+          'username isOnline lastSeen isSubAdmin profilePicture ipAddress createdAt assignedUsers'
+        ).sort({ createdAt: -1 });
+
+        // Send the subadmins list to the admin
+        socket.emit('admin:subAdminsList', subAdmins);
+      } catch (error) {
+        console.error('Error fetching subadmins:', error);
+        socket.emit('admin:error', { message: 'Failed to fetch subadmins' });
       }
     });
 
