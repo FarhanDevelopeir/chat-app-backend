@@ -1418,15 +1418,15 @@ const setupSocket = (server) => {
     });
 
     // Add this new socket event handler to your server code
-socket.on('admin:deleteUser', async ({ userID, username }) => {
-    try {
+    socket.on('admin:deleteUser', async ({ userID, username }) => {
+      try {
         const isAdminSocket = Array.from(socket.rooms).includes('admin');
         if (!isAdminSocket) {
-            socket.emit('admin:userDeleted', {
-                success: false,
-                message: 'Unauthorized. Only admin can delete users.'
-            });
-            return;
+          socket.emit('admin:userDeleted', {
+            success: false,
+            message: 'Unauthorized. Only admin can delete users.'
+          });
+          return;
         }
 
         console.log('Delete user attempt:', userID, username);
@@ -1435,47 +1435,63 @@ socket.on('admin:deleteUser', async ({ userID, username }) => {
         const user = await User.findOne({ _id: userID });
 
         if (!user) {
-            socket.emit('admin:userDeleted', {
-                success: false,
-                message: 'User not found'
-            });
-            return;
+          socket.emit('admin:userDeleted', {
+            success: false,
+            message: 'User not found'
+          });
+          return;
         }
-
-        // Check if user is currently online and disconnect them
-        // if (user.isOnline) {
-        //     // Find the user's socket and disconnect them
-        //     const userSocketEntry = Array.from(activeUsers.entries()).find(
-        //         ([_, userData]) => userData.userId.toString() === userID
-        //     );
-            
-        //     if (userSocketEntry) {
-        //         const [userUsername, userData] = userSocketEntry;
-        //         const userSocket = io.sockets.sockets.get(userData.socketId);
-                
-        //         if (userSocket) {
-        //             // Notify user before disconnecting
-        //             userSocket.emit('user:accountDeleted', {
-        //                 message: 'Your account has been deleted by an administrator'
-        //             });
-                    
-        //             // Disconnect user
-        //             userSocket.disconnect();
-        //         }
-                
-        //         // Remove from active users
-        //         activeUsers.delete(userUsername);
-        //     }
-        // }
 
         // If user is a sub admin, we might want to handle their assigned users
         if (user.isSubAdmin && user.assignedUsers && user.assignedUsers.length > 0) {
-            // Optional: You could reassign users or handle this case as needed
-            console.log(`Deleting sub admin with ${user.assignedUsers.length} assigned users`);
+          // Optional: You could reassign users or handle this case as needed
+          console.log(`Deleting sub admin with ${user.assignedUsers.length} assigned users`);
         }
 
         // Delete the user from database
         await User.findByIdAndDelete(userID);
+
+        const messages = await Message.find({
+          $or: [
+            { sender: username },
+            { receiver: username }
+          ]
+        });
+
+        if (messages.length > 0) {
+          await Message.deleteMany({
+            $or: [
+              { sender: username },
+              { receiver: username }
+            ]
+          });
+          console.log(`Deleted ${messages.length} messages for user: ${username}`);
+
+
+        }
+
+        // Remove this user from all sub-admins' assignedUsers lists
+        const subAdmins = await User.find({ isSubAdmin: true });
+
+        if (subAdmins.length > 0) {
+          const updatePromises = subAdmins.map(async (subAdmin) => {
+            if (subAdmin.assignedUsers && subAdmin.assignedUsers.includes(username)) {
+              return User.findByIdAndUpdate(
+                subAdmin._id,
+                { $pull: { assignedUsers: username } },
+                { new: true }
+              );
+            }
+            return null;
+          });
+
+          const updateResults = await Promise.all(updatePromises);
+          const updatedSubAdmins = updateResults.filter(result => result !== null);
+
+          if (updatedSubAdmins.length > 0) {
+            console.log(`Removed user ${username} from ${updatedSubAdmins.length} sub-admin(s) assignedUsers lists`);
+          }
+        }
 
 
         // **NEW: Only notify the specific user to reload their page**
@@ -1486,21 +1502,21 @@ socket.on('admin:deleteUser', async ({ userID, username }) => {
 
         // Send success response
         socket.emit('admin:userDeleted', {
-            success: true,
-            message: 'User deleted successfully'
+          success: true,
+          message: 'User deleted successfully'
         });
 
         // Broadcast updated user list to admin
         broadcastUserListUpdate(io);
 
-    } catch (error) {
+      } catch (error) {
         console.error('Delete user error:', error);
         socket.emit('admin:userDeleted', {
-            success: false,
-            message: error.message || 'Failed to delete user'
+          success: false,
+          message: error.message || 'Failed to delete user'
         });
-    }
-});
+      }
+    });
 
     // Admin authentication
     socket.on('admin:login', async () => {
@@ -3155,7 +3171,7 @@ socket.on('admin:deleteUser', async ({ userID, username }) => {
   });
 
 
-  
+
 
   return io;
 };
