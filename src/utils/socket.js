@@ -35,7 +35,7 @@ const setupSocket = (server) => {
     console.log('A user connected:', socket.id);
 
     // console.log("Full Socket Object:", socket);
-    
+
 
     // Store username on socket for group functionality
     socket.username = null;
@@ -46,7 +46,8 @@ const setupSocket = (server) => {
     const broadcastUserListUpdate = async (io) => {
       try {
         const users = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin');
-        io.to('admin').emit('admin:userList', filterNonSubAdmins(users));
+        // io.to('admin').emit('admin:userList', filterNonSubAdmins(users));
+        io.to('admin').emit('admin:userList', users);
       } catch (error) {
         console.error('Error broadcasting user list update:', error);
       }
@@ -483,7 +484,7 @@ const setupSocket = (server) => {
         let user = await User.findOne({ username, password });
 
         // If user doesn't exist
-        if (user== null) {
+        if (user == null) {
           socket.emit('user:loginError', {
             error: 'Invalid username or password'
           });
@@ -1635,7 +1636,32 @@ const setupSocket = (server) => {
         // Send list of users to subadmin
         const users = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin assignedUsers');
         const filteredUsers = filterUsersForSubAdmin(users, username);
-        socket.emit('subadmin:userList', filteredUsers);
+
+        try {
+          const Admin = await admin.findOne({ username: 'admin' });
+
+          if (!Admin) {
+            return;
+          }
+
+          console.log('Admin in here', Admin)
+
+          const adminAsUser = {
+            username: Admin.username,
+            isOnline: adminIsOnline,
+            profilePicture: Admin.profilePicture,
+          };
+
+          // Add admin to the list
+          const usersWithAdmin = [...filteredUsers, adminAsUser];
+
+          socket.emit('subadmin:userList', usersWithAdmin);
+
+          socket.emit('admin:profiledata', Admin);
+
+        } catch (error) {
+          console.error('Admin not found:', error);
+        }
 
         // Send groups the subadmin is part of
         const Group = require('../models/group');
@@ -1963,7 +1989,34 @@ const setupSocket = (server) => {
 
       const users = await User.find({}, 'username isOnline lastSeen profilePicture ipAddress isSubAdmin assignedUsers');
       const filteredUsers = filterUsersForSubAdmin(users, username);
-      socket.emit('subadmin:userList', filteredUsers);
+
+      socket.emit('admin:status', { isOnline: adminIsOnline });
+
+      try {
+        const Admin = await admin.findOne({ username: 'admin' });
+
+        if (!Admin) {
+          return;
+        }
+
+        console.log('Admin in here', Admin)
+
+        const adminAsUser = {
+          username: Admin.username,
+          isOnline: adminIsOnline,
+          profilePicture: Admin.profilePicture,
+        };
+
+        // Add admin to the list
+        const usersWithAdmin = [...filteredUsers, adminAsUser];
+
+        socket.emit('subadmin:userList', usersWithAdmin);
+
+        socket.emit('admin:profiledata', Admin);
+
+      } catch (error) {
+        console.error('Admin not found:', error);
+      }
 
       // Send groups the subadmin is part of
       const Group = require('../models/group');
