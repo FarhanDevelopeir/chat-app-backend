@@ -77,8 +77,8 @@ const setupSocket = (server) => {
 
         const usersWithAdmin = [...filteredUsers, adminAsUser];
 
-        io.emit('subadmin:userList', usersWithAdmin);
-        socket.emit('admin:profiledata', Admin);
+        io.to(username).emit('subadmin:userList', usersWithAdmin);
+        io.to(username).emit('admin:profiledata', Admin);
 
         // Broadcast updated user list to all
         broadcastUserListUpdate(io);
